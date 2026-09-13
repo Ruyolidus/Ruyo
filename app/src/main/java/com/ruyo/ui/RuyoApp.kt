@@ -241,8 +241,8 @@ private fun SettingsScreen(model: RuyoModel) {
             Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surface, border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
                 Column {
                     listOf("system" to "Use device setting", "light" to "Light", "dark" to "Dark").forEachIndexed { index, (id, label) ->
-                        Row(Modifier.fillMaxWidth().clickable { model.setTheme(id) }.testTag("theme-$id").padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = model.theme == id, onClick = { model.setTheme(id) })
+                        Row(Modifier.fillMaxWidth().clickable { model.changeTheme(id) }.testTag("theme-$id").padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                            RadioButton(selected = model.theme == id, onClick = { model.changeTheme(id) })
                             Text(label, Modifier.padding(start = 8.dp), style = MaterialTheme.typography.bodyLarge)
                         }
                         if (index < 2) HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant)

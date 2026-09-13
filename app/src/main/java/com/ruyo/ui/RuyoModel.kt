@@ -54,7 +54,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         if (samples.isEmpty()) samples = withContext(Dispatchers.Default) { SampleChapter.build() }
         ready = true
     }
-    fun setTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
+    fun changeTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun home() { route = "home"; selecting = false; draft = null; opened = null }
     fun openSample() { route = "sample"; japanese = true }
     fun importImage(uri: Uri) = task {
