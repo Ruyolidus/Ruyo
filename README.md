@@ -29,9 +29,11 @@ Pushes to `main`, `feature/**`, and `codex/**`, and pull requests to `main`, run
 workflow automatically. **Run workflow** also starts a build manually. Artifacts
 are retained for seven days. Runs use the repository owner's GitHub Actions quota.
 
-The preview package is `com.ruyolidus.ruyo.debug`. Every preview uses the same
-development signing identity, allowing updates without uninstalling. Production
-signing will be separate.
+The preview package is `com.ruyolidus.ruyo.debug`. Android generates a debug signing
+key on each fresh build runner. If a later APK cannot update an existing preview,
+uninstall the earlier preview first; this removes its saved sentences. Persistent
+private test signing and production signing will be configured separately. No
+signing key is stored in this repository.
 
 ## Build locally
 
@@ -83,4 +85,3 @@ The sample artwork and lessons were created for this repository. Gradle wrapper
 scripts and the wrapper JAR come from Gradle 8.13.0 and retain their upstream
 notices; Gradle is distributed under the Apache License 2.0. AndroidX, Kotlin,
 JUnit, and Robolectric remain subject to their respective licenses.
-

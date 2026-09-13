@@ -1,0 +1,67 @@
+name: Android APK
+
+on:
+  push:
+    branches: [main, 'feature/**', 'codex/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and build preview APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Set up Gradle and validate wrapper
+        uses: gradle/actions/setup-gradle@v4
+      - name: Install Android SDK packages
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Test, lint, and assemble
+        run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Upload installable APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ruyo-preview-${{ github.run_number }}
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 7
+      - name: Upload test reports and renderer previews
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ruyo-checks-${{ github.run_number }}
+          path: |
+            app/build/reports/
+            app/build/test-results/
+            app/build/test-previews/
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Add installation instructions
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<'SUMMARY'
+          ### Ruyo preview APK
+          Download **Ruyo-preview** from this run's Artifacts section, extract the ZIP,
+          and open **app-debug.apk** on your Android phone (Android 9 or newer).
+
+          This build includes the offline sample reader, horizontal Japanese bubble
+          replacement, prewritten lessons, saved sentences, and local image preview.
+          Live AI translation and automatic detection on imported images are not yet implemented.
+
+          The runner generates a debug signing key. A later build may have a different
+          signing identity. If Android refuses an update, uninstall the earlier preview
+          first; this removes its saved sentences. Persistent private signing comes later.
+          SUMMARY
