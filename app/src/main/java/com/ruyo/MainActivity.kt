@@ -1,16 +1,15 @@
-package com.ruyolidus.ruyo
+package com.ruyo
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import com.ruyolidus.ruyo.ui.RuyoApp
-import com.ruyolidus.ruyo.ui.RuyoTheme
+import com.ruyo.ui.RuyoApp
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { RuyoTheme { RuyoApp() } }
+        setContent { RuyoApp() }
     }
 }

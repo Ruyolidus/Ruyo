@@ -1,10 +1,10 @@
-package com.ruyolidus.ruyo.reader
+package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Path
 import android.graphics.RectF
-import com.ruyolidus.ruyo.sample.SampleChapter
+import com.ruyo.sample.SampleChapter
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

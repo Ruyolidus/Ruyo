@@ -1,4 +1,4 @@
-package com.ruyolidus.ruyo.reader
+package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -14,6 +14,15 @@ class PixelMask(val width: Int, val height: Int, private val pixels: BooleanArra
 
     operator fun get(x: Int, y: Int): Boolean =
         x in 0 until width && y in 0 until height && pixels[y * width + x]
+
+    fun copyPixels(): BooleanArray = pixels.copyOf()
+
+    fun centerY(): Float {
+        var sum = 0L
+        var count = 0
+        for (i in pixels.indices) if (pixels[i]) { sum += i / width; count++ }
+        return if (count == 0) height / 2f else sum.toFloat() / count + 0.5f
+    }
 
     /** Intersection of every row in a line band, then its longest contiguous span. */
     fun span(top: Int, bottomExclusive: Int): IntRange? {
@@ -83,4 +92,3 @@ class PixelMask(val width: Int, val height: Int, private val pixels: BooleanArra
         }
     }
 }
-

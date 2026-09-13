@@ -1,4 +1,4 @@
-package com.ruyolidus.ruyo.sample
+package com.ruyo.sample
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -6,10 +6,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
-import com.ruyolidus.ruyo.reader.BubbleFitter
-import com.ruyolidus.ruyo.reader.FitResult
-import com.ruyolidus.ruyo.reader.FlatBubbleRepair
-import com.ruyolidus.ruyo.reader.PixelMask
+import com.ruyo.reader.BubbleFitter
+import com.ruyo.reader.FitResult
+import com.ruyo.reader.FlatBubbleRepair
+import com.ruyo.reader.PixelMask
 
 data class SampleLine(
     val id: String,
@@ -129,74 +129,70 @@ object SampleChapter {
     }
 
     private fun drawScene(canvas: Canvas, index: Int) {
+        // Original ink-style streetscape: no external illustrations or image assets.
+        val ink = Color.rgb(40, 44, 49)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         fun fill(color: Int) { paint.color = color; paint.style = Paint.Style.FILL }
-        val sky = when (index) {
-            0 -> Color.rgb(226, 235, 241)
-            1 -> Color.rgb(239, 227, 211)
-            else -> Color.rgb(209, 220, 227)
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float, width: Float = 2f) {
+            paint.color = ink; paint.style = Paint.Style.STROKE; paint.strokeWidth = width
+            canvas.drawLine(x1, y1, x2, y2, paint)
         }
-        canvas.drawColor(sky)
-        fill(Color.rgb(250, 226, 160))
-        canvas.drawCircle(730f, 420f, 80f, paint)
-        fill(Color.rgb(193, 208, 196))
-        canvas.drawPath(Path().apply {
-            moveTo(0f, 730f); lineTo(0f, 490f); quadTo(260f, 365f, 490f, 615f)
-            quadTo(690f, 410f, 900f, 565f); lineTo(900f, 1000f); lineTo(0f, 1000f); close()
-        }, paint)
-        fill(Color.rgb(144, 174, 158))
-        canvas.drawPath(Path().apply {
-            moveTo(0f, 710f); quadTo(480f, 510f, 900f, 755f)
-            lineTo(900f, 1000f); lineTo(0f, 1000f); close()
-        }, paint)
-        fill(Color.rgb(237, 224, 201))
-        canvas.drawPath(Path().apply {
-            moveTo(500f, 630f); lineTo(610f, 630f); lineTo(800f, 1000f); lineTo(225f, 1000f); close()
-        }, paint)
-        for (i in 0..4) {
-            val x = 40f + i * 160f
-            fill(Color.rgb(104, 132, 113))
-            canvas.drawRoundRect(RectF(x, 680f, x + 10f, 860f), 5f, 5f, paint)
+        canvas.drawColor(Color.rgb(230 - index * 5, 233 - index * 5, 233 - index * 5))
+        fill(Color.rgb(210, 213, 212))
+        canvas.drawRect(0f, 330f, 250f, 1000f, paint)
+        canvas.drawRect(670f, 230f, 900f, 1000f, paint)
+        fill(Color.rgb(246, 245, 239))
+        canvas.drawRect(12f, 370f, 200f, 980f, paint)
+        canvas.drawRect(705f, 270f, 890f, 970f, paint)
+        for (y in 410..820 step 94) for (x in listOf(35, 122, 730, 820)) {
+            fill(Color.rgb(167, 176, 177))
+            canvas.drawRect(x.toFloat(), y.toFloat(), x + 49f, y + 63f, paint)
+            line(x.toFloat(), y.toFloat(), x + 49f, y.toFloat(), 3f)
+            line(x + 24f, y.toFloat(), x + 24f, y + 63f)
         }
-        paint.color = Color.rgb(104, 132, 113)
-        paint.strokeWidth = 7f
-        canvas.drawLine(0f, 745f, 650f, 745f, paint)
-        drawPerson(canvas, 340f, 617f, Color.rgb(104, 87, 153), index == 0)
-        drawPerson(canvas, 588f, 650f, Color.rgb(61, 112, 104), false)
-        fill(Color.rgb(82, 105, 86))
-        for (i in 0..10) {
-            val x = (i * 89 + 25).toFloat()
-            val y = 940f + (i % 3) * 14f
-            canvas.drawOval(RectF(x, y, x + 26f, y + 10f), paint)
-        }
+        line(205f, 330f, 205f, 1000f, 5f)
+        line(695f, 230f, 695f, 1000f, 5f)
+        for (y in 360..950 step 18) line(220f, y.toFloat(), 245f, y + 10f, 1f)
+        for (y in 340..920 step 34) line(710f, y.toFloat(), 898f, y.toFloat(), 1f)
+        fill(Color.rgb(191, 199, 198))
+        canvas.drawPath(Path().apply { moveTo(330f, 540f); lineTo(560f, 540f); lineTo(930f, 1000f); lineTo(-30f, 1000f); close() }, paint)
+        fill(Color.rgb(235, 235, 229))
+        canvas.drawPath(Path().apply { moveTo(425f, 560f); lineTo(470f, 560f); lineTo(640f, 1000f); lineTo(238f, 1000f); close() }, paint)
+        line(425f, 560f, 238f, 1000f)
+        line(470f, 560f, 640f, 1000f)
+        for (y in listOf(650f, 735f, 850f, 965f)) line(262f, y, 645f, y, 1f)
+        line(255f, 410f, 668f, 430f, 2f)
+        line(254f, 423f, 666f, 438f, 1f)
+        line(284f, 510f, 284f, 835f, 5f)
+        fill(ink); canvas.drawRect(270f, 506f, 302f, 552f, paint)
+        fill(Color.rgb(240, 213, 126)); canvas.drawRect(276f, 511f, 296f, 545f, paint)
+        // A striped shop awning and quiet foreground details.
+        fill(Color.rgb(229, 225, 213)); canvas.drawRect(0f, 650f, 205f, 700f, paint)
+        for (x in 0..190 step 32) { fill(Color.rgb(108, 122, 119)); canvas.drawRect(x.toFloat(), 650f, x + 16f, 700f, paint) }
+        line(0f, 700f, 205f, 700f, 4f)
+        fill(Color.rgb(103, 116, 114)); canvas.drawRect(25f, 812f, 112f, 935f, paint)
+        fill(Color.rgb(230, 230, 219)); canvas.drawRect(36f, 827f, 102f, 879f, paint)
+        for (x in 46..92 step 15) line(x.toFloat(), 888f, x.toFloat(), 908f, 4f)
+        drawWalker(canvas, 385f, 724f, Color.rgb(66, 77, 80), index == 0)
+        drawWalker(canvas, 536f, 746f, Color.rgb(113, 118, 115), false)
         if (index == 2) {
-            fill(Color.rgb(182, 192, 208))
-            canvas.drawOval(RectF(35f, 400f, 210f, 455f), paint)
-            canvas.drawOval(RectF(135f, 378f, 330f, 450f), paint)
+            paint.color = Color.rgb(146, 157, 162); paint.strokeWidth = 1.5f
+            for (i in 0..36) { val x = (i * 79 % 900).toFloat(); val y = 400f + (i * 67 % 530); canvas.drawLine(x, y, x - 16f, y + 44f, paint) }
         }
     }
 
-    private fun drawPerson(canvas: Canvas, x: Float, y: Float, shirt: Int, waving: Boolean) {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
-        paint.color = Color.rgb(65, 67, 80)
-        paint.strokeWidth = 24f
-        canvas.drawLine(x - 16f, y + 170f, x - 32f, y + 280f, paint)
-        canvas.drawLine(x + 22f, y + 170f, x + 49f, y + 280f, paint)
-        paint.color = shirt
-        canvas.drawRoundRect(RectF(x - 57f, y + 45f, x + 62f, y + 190f), 38f, 38f, paint)
-        paint.color = Color.rgb(226, 186, 152)
-        canvas.drawCircle(x, y + 8f, 45f, paint)
-        paint.color = Color.rgb(63, 61, 68)
-        canvas.drawArc(RectF(x - 46f, y - 39f, x + 46f, y + 47f), 180f, 180f, true, paint)
-        paint.strokeWidth = 7f
-        canvas.drawLine(x - 13f, y + 13f, x - 13f, y + 18f, paint)
-        canvas.drawLine(x + 15f, y + 13f, x + 15f, y + 18f, paint)
-        paint.style = Paint.Style.STROKE
-        canvas.drawArc(RectF(x - 10f, y + 20f, x + 13f, y + 34f), 0f, 180f, false, paint)
-        paint.color = shirt
-        paint.strokeWidth = 24f
-        canvas.drawLine(x - 42f, y + 80f, x - 83f, if (waving) y - 12f else y + 155f, paint)
-        canvas.drawLine(x + 44f, y + 78f, x + 91f, y + 158f, paint)
+    private fun drawWalker(canvas: Canvas, x: Float, y: Float, coat: Int, waving: Boolean) {
+        val p = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = coat }
+        canvas.drawPath(Path().apply { moveTo(x - 21f, y + 30f); lineTo(x + 20f, y + 30f); lineTo(x + 36f, y + 137f); lineTo(x - 30f, y + 137f); close() }, p)
+        p.color = Color.rgb(56, 59, 63); p.strokeWidth = 15f; p.strokeCap = Paint.Cap.SQUARE
+        canvas.drawLine(x - 10f, y + 134f, x - 17f, y + 207f, p)
+        canvas.drawLine(x + 15f, y + 134f, x + 28f, y + 205f, p)
+        p.color = Color.rgb(211, 196, 177); canvas.drawOval(RectF(x - 16f, y - 13f, x + 17f, y + 30f), p)
+        p.color = Color.rgb(50, 53, 57); canvas.drawArc(RectF(x - 18f, y - 18f, x + 19f, y + 25f), 170f, 210f, true, p)
+        p.color = coat; p.strokeWidth = 13f; p.strokeCap = Paint.Cap.ROUND
+        canvas.drawLine(x - 17f, y + 43f, x - 39f, if (waving) y - 2f else y + 105f, p)
+        canvas.drawLine(x + 18f, y + 43f, x + 47f, y + 98f, p)
+        p.color = Color.rgb(188, 156, 97); p.strokeWidth = 4f
+        canvas.drawLine(x + 43f, y + 98f, x + 58f, y + 184f, p)
     }
 }
-

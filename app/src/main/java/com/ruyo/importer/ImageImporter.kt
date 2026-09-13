@@ -1,4 +1,4 @@
-package com.ruyolidus.ruyo.importer
+package com.ruyo.importer
 
 import android.content.Context
 import android.graphics.Bitmap

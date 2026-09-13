@@ -1,4 +1,4 @@
-package com.ruyolidus.ruyo.reader
+package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -9,7 +9,6 @@ import android.icu.text.BreakIterator
 import android.text.TextPaint
 import java.util.Locale
 import kotlin.math.ceil
-import kotlin.math.floor
 
 data class TextLine(val start: Int, val end: Int, val x: Float, val baseline: Float)
 
@@ -50,6 +49,7 @@ class BubbleFitter {
         }
         val breaks = boundaries(text, BreakIterator.getLineInstance(Locale.JAPANESE))
             .filter { it in graphemes && legalBreak(text, it) }
+        val centerY = safeRegion.centerY()
         val steps = ceil((preferredSize - minimumSize) / 2f).toInt()
         for (step in 0..steps) {
             val size = maxOf(minimumSize, preferredSize - step * 2f)
@@ -58,7 +58,7 @@ class BubbleFitter {
             val lineHeight = ceil(metrics.bottom - metrics.top + size * 0.08f + 4f).toInt()
             val maxLines = minOf(12, safeRegion.height / lineHeight, graphemes.lastIndex)
             for (count in 1..maxLines) {
-                val centeredTop = (safeRegion.height - count * lineHeight) / 2
+                val centeredTop = (centerY - count * lineHeight / 2f).toInt()
                 for (shift in intArrayOf(0, lineHeight / 5, -lineHeight / 5)) {
                     val top = centeredTop + shift
                     val spans = (0 until count).map { line ->
@@ -139,4 +139,3 @@ class BubbleFitter {
         return false
     }
 }
-

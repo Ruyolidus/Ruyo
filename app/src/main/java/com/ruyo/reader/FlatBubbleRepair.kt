@@ -1,4 +1,4 @@
-package com.ruyolidus.ruyo.reader
+package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Color
