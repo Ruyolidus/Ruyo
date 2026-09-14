@@ -38,6 +38,26 @@ jobs:
         run: node scripts/test-web-discovery.mjs
       - name: Test, lint, and assemble
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Summarize validation results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = sorted(Path("app/build/test-results/testDebugUnitTest").glob("TEST-*.xml"))
+          totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              for key in totals:
+                  totals[key] += int(suite.attrib.get(key, 0))
+              print(suite.attrib.get("name"), {key: suite.attrib.get(key, "0") for key in totals})
+          print("TEST TOTALS:", totals, "suites:", len(reports))
+          lint = Path("app/build/reports/lint-results-debug.xml")
+          if lint.exists():
+              issues = ET.parse(lint).getroot().findall("issue")
+              print("LINT:", {level: sum(issue.attrib.get("severity") == level for issue in issues) for level in ["Fatal", "Error", "Warning"]})
+          print("RENDERED PNGS:", len(list(Path("app/build/test-previews").glob("*.png"))))
+          PY
       - name: Verify application ID
         run: |
           ruyo_package_info=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk)
@@ -75,7 +95,10 @@ jobs:
           reading position, an in-app HTTPS browser, and website image imports.
           Use Add comic to select multiple files, or Browse to open a chapter link.
           Find images downloads selected pages for thumbnail/order review.
-          Bubble editing has repeated-preview regression checks and inline fit errors.
+          Tap the top-right address icon to expand or collapse the browser field.
+          Bubble editing supports target languages, font styles, and estimated source size.
+          New imports retain up to 6 MP; recognized comment images are excluded by default.
+          Repeated-preview, complete-text, and multilingual shaping checks are included.
           Live AI translation and OCR are not yet implemented.
 
           Ruyo-checks includes native renderer tests and actual app-screen PNGs.

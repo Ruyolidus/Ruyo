@@ -12,7 +12,7 @@ enum class LetteringFont(val family: String, val label: String) {
     MONO("monospace", "Monospace");
 
     fun typeface(bold: Boolean, italic: Boolean): Typeface = Typeface.create(family,
-        (if (bold) Typeface.BOLD else 0) or (if (italic) Typeface.ITALIC else 0))
+        when { bold && italic -> Typeface.BOLD_ITALIC; bold -> Typeface.BOLD; italic -> Typeface.ITALIC; else -> Typeface.NORMAL })
 
     companion object {
         fun fromId(id: String) = entries.firstOrNull { it.family == id } ?: SANS
