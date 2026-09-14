@@ -128,7 +128,8 @@ class AppFlowTest {
         awaitTag("book-sample")
         compose.runOnIdle { model.importImages(files.map { Uri.fromFile(it) }) }
         awaitTag("import-review")
-        assertEquals(listOf("page1.png", "page2.png", "page10.png"), model.importing!!.pages.map { it.page.name })
+        capture("chapter-import-before-order")
+        assertEquals(model.importing!!.failures.joinToString("; "), listOf("page1.png", "page2.png", "page10.png"), model.importing!!.pages.map { it.page.name })
         val first = model.importing!!.pages.first().page.id
         compose.onNodeWithTag("move-down-$first").performScrollTo().performClick()
         assertEquals(first, model.importing!!.pages[1].page.id)

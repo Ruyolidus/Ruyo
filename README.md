@@ -3,13 +3,22 @@
 An Android reader for learning Japanese through comic dialogue. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.2.0
+## Preview 0.3.0
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
 separate app from the original `com.ruyolidus.ruyo.debug` preview.
 
-- A library with persistent image imports, title search, filters, and cover thumbnails.
+- Multi-image chapters: choose up to 200 comic chunks at once, review thumbnails,
+  sort numeric filenames (1, 2, 10), move pages up/down, then save one chapter.
+- Rename chapters, reorder/remove pages, and append more images. Existing single-image
+  imports remain readable with their edits; edited bubbles retain stable page IDs.
+- A continuous reader with saved page/scroll position, serialized loading, and a
+  bounded cache of nearby pages. Library search, filters, and thumbnails remain.
+- An in-app HTTPS browser: paste a chapter link, browse and scroll to load lazy
+  images, tap **Find images**, select pages, download, review their order, then save.
+- Import progress, cancellation, and per-image failures. Partial successful imports
+  are shown for review; they are never silently saved as complete chapters.
 - A full-width comic reader with pinch zoom and original/Japanese switching.
 - A restrained light/dark interface with Library, Saved, and Settings navigation.
 - Tap an enclosed, light, flat bubble to select it; review and brush-correct its
@@ -18,17 +27,26 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   oversized selections, and regions likely to contain artwork.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
   edited bubble to revise it or restore its original state.
+- Every successful replacement preview scrolls into view. Fit failures stay visible
+  in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
 - Sample grammar/vocabulary lessons and saved sentences, including your own text.
 
 **Translations on your images are entered manually in this build.** The light-bubble
 selector is an assisted editing tool, not OCR or a general bubble segmentation model.
 It is not reliable for every page; inspect the red mask and preview before saving.
-Live AI, API-key profiles, textured-background inpainting, CBZs, website imports,
-and translation prefetch are still to be implemented.
+Live AI, API-key profiles, textured-background inpainting, CBZs, and translation
+prefetch are still to be implemented. Website import currently discovers HTTPS
+`img`/common lazy-image URLs from the open page, in document order. Canvas readers,
+iframes, scrambled images, protected downloads, and some custom lazy loaders need
+dedicated source adapters. This does not promise support for every scan site.
+Use pages you have permission to save; access restrictions are not bypassed.
 
-Imports are bounded, decoded copies stored privately on the device. Large images
-may be reduced and are labeled in the reader. This is not yet full-resolution
-webtoon tiling. Use the original file outside Ruyo if you need its full resolution.
+New imports retain original image bytes in private storage plus bounded working
+copies (up to 2 megapixels / 8192 pixels per dimension). Large working copies are
+marked in page review. Full-resolution webtoon tiling and OCR against originals
+are future work. The app cannot recover original pixels lost by an earlier 0.2
+import. Each image is limited to 40 MB, each import batch to 512 MB, and each
+chapter to 200 images. Unsaved import/editor drafts do not survive process death.
 
 ## Install a test build
 
@@ -43,7 +61,8 @@ are retained for seven days. Runs use the repository owner's GitHub Actions quot
 
 The preview package is `com.ruyo`. Android generates a debug signing
 key on each fresh build runner. If a later APK cannot update an existing preview,
-uninstall the earlier preview first; this removes its saved sentences. Persistent
+uninstall the earlier preview first; this removes its locally saved chapters, edits,
+and sentences. Persistent
 private test signing and production signing will be configured separately. No
 signing key is stored in this repository.
 
@@ -54,6 +73,7 @@ Use JDK 17 and an Android SDK containing `platforms;android-36` and
 untracked `local.properties` file.
 
 ```sh
+node scripts/test-web-discovery.mjs
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
 
@@ -76,7 +96,11 @@ will need their own validation; this prototype does not claim those problems are
 
 Robolectric tests exercise the real native graphics path and export before/after
 PNGs to the **Ruyo-checks** artifact for inspection. Compose flow tests also export
-actual library, reader, lesson, settings, and editor screenshots. Tests cover
+actual library, reader, chapter review, website image selection, lesson, settings,
+and editor screenshots. JavaScript fixtures execute the production image collector;
+HTTP transport tests cover redirects, cookie scope, invalid content, size limits,
+and cancellation. Storage tests cover legacy imports, stable edits after reorder,
+append, reading position, and rollback when saving fails. Tests cover
 import/edit/reopen/restore, protection of existing edits on failure, whole-text fitting,
 font shrinking, impossible fits, holes in a region, and preservation of every
 pixel outside the permitted edit masks. These tests do not replace testing the
@@ -88,9 +112,10 @@ app's interaction and performance on an actual phone.
 | --- | --- |
 | `reader` | Pixel masks, horizontal fitting, and flat-bubble repair |
 | `sample` | Original sample artwork and explicit prewritten learning data |
-| `importer` | Document picker image decoding with a memory budget |
-| `data` | Persistent image library, masks, edits, and saved sentences |
-| `ui` | Reader, home screen, imported image preview, lessons, and themes |
+| `importer` | Multiple-document decoding and natural filename sorting |
+| `web` | HTTPS URL policy, DOM image discovery, bounded image downloads |
+| `data` | Ordered chapters, original files, masks, edits, progress, and saved sentences |
+| `ui` | Library, reader, chapter review, browser, editor, lessons, and themes |
 
 See [the implementation roadmap](docs/architecture.md) for the next stages.
 

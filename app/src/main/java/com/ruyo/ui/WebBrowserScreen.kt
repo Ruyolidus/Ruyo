@@ -101,6 +101,8 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                                 handler.cancel(); failure = "This site's secure connection could not be verified."
                             }
                             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
+                                (view.parent as? android.view.ViewGroup)?.removeView(view)
+                                view.destroy(); view.tag = "ruyo-disposed"
                                 web = null; dead = true; progress = 100
                                 failure = "The browser closed this page. Tap Go to reopen it."
                                 return true
@@ -116,7 +118,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                     }
                 }, onRelease = { view ->
                     if (web === view) web = null
-                    view.stopLoading(); view.webChromeClient = null; view.destroy()
+                    if (view.tag != "ruyo-disposed") { view.stopLoading(); view.webChromeClient = null; view.destroy() }
                 })
             }
             if (model.webUrl.isBlank()) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {

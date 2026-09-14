@@ -39,7 +39,7 @@ object WebImageDiscovery {
             const style = getComputedStyle(img);
             if (style.display === 'none' || style.visibility === 'hidden') continue;
             const lazy = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original');
-            const raw = (img.naturalWidth > 100 ? img.currentSrc : lazy) || img.currentSrc || img.src;
+            const raw = lazy || img.currentSrc || img.src;
             if (!raw) continue;
             try {
               const url = new URL(raw.trim(), document.baseURI);
@@ -47,8 +47,9 @@ object WebImageDiscovery {
               url.hash = '';
               if (seen.has(url.href)) continue;
               seen.add(url.href);
-              const w = img.naturalWidth || Number(img.getAttribute('width')) || 0;
-              const h = img.naturalHeight || Number(img.getAttribute('height')) || 0;
+              const loaded = url.href === img.currentSrc || url.href === img.src;
+              const w = (loaded ? img.naturalWidth : 0) || Number(img.getAttribute('width')) || 0;
+              const h = (loaded ? img.naturalHeight : 0) || Number(img.getAttribute('height')) || 0;
               if (w > 0 && h > 0 && (w < 160 || h < 120)) continue;
               images.push({url: url.href, width: w, height: h});
             } catch (_) {}

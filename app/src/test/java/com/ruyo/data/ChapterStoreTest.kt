@@ -91,6 +91,16 @@ class ChapterStoreTest {
         assertEquals(2, store.commitChapter("Updated", listOf(good), book.id).pages.size)
     }
 
+    @Test fun realPngBytesCanBeStagedAndOriginalBytesArePreserved() {
+        val store = LocalBookStore(context)
+        val source = bitmap(Color.GREEN)
+        val bytes = java.io.ByteArrayOutputStream().apply { source.compress(Bitmap.CompressFormat.PNG, 100, this) }.toByteArray()
+        val stage = store.stageStream("Green.png") { ByteArrayInputStream(bytes) }
+        assertArrayEquals(bytes, File(stage.folder, "original.bin").readBytes())
+        val book = store.commitChapter("Green", listOf(stage))
+        assertTrue(source.sameAs(store.open(book).original))
+    }
+
     @Test fun invalidOrCancelledImageNeverLeavesAnImportFolder() {
         val store = LocalBookStore(context)
         assertTrue(runCatching { store.stageStream("bad.png") { ByteArrayInputStream("not an image".toByteArray()) } }.isFailure)
