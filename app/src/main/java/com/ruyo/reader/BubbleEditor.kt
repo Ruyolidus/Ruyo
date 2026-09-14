@@ -26,6 +26,7 @@ data class BubbleEdit(
     val region: BubbleRegion,
     val japanese: String,
     val margin: Int,
+    val fontScale: Float = 1f,
 )
 
 sealed interface SelectionResult {
@@ -129,12 +130,18 @@ object BubbleSelector {
 data class BubblePreview(val crop: Bitmap, val fit: FitResult.Accepted)
 
 object BubbleEditRenderer {
+    // Start at ordinary dialogue size (about 16 dp on a 393 dp-wide reader),
+    // independent of the amount of empty space in a large speech bubble.
+    fun preferredSize(pageWidth: Int, scale: Float = 1f): Float = (pageWidth / 24f).coerceIn(14f, 60f) * scale
+
     fun preview(source: Bitmap, edit: BubbleEdit): Result<BubblePreview> = runCatching {
         val region = edit.region
         require(region.left >= 0 && region.top >= 0 && region.left + region.width <= source.width && region.top + region.height <= source.height) { "The bubble is outside the image." }
         val safe = region.interior.inset(edit.margin.coerceAtLeast(2))
-        val minimum = max(12f, source.width / 32f)
-        val result = BubbleFitter().fit(edit.japanese, safe, max(minimum, min(76f, region.height / 2.5f)), minimum)
+        require(edit.fontScale.isFinite() && edit.fontScale in 0.6f..1.6f) { "Choose a text size between 60% and 160%." }
+        val preferred = preferredSize(source.width, edit.fontScale)
+        val minimum = min(preferred, 6f)
+        val result = BubbleFitter().fit(edit.japanese, safe, preferred, minimum)
         require(result is FitResult.Accepted) { (result as FitResult.Rejected).reason }
         val pixels = IntArray(region.width * region.height)
         source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)

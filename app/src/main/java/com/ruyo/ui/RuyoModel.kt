@@ -203,6 +203,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         selecting = false; route = "editor"
     }
     fun changeText(value: String) { draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
+    fun changeFontScale(value: Float) { draft = draft?.let { it.copy(edit = it.edit.copy(fontScale = value.coerceIn(0.6f, 1.6f)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeMargin(value: Int) { draft = draft?.let { it.copy(edit = it.edit.copy(margin = value), preview = null, previewError = null, revision = it.revision + 1) } }
     fun resetMask() { draft = draft?.let { it.copy(edit = it.edit.copy(region = it.edit.region.copy(eraseMask = it.initialMask.copyOf())), preview = null, previewError = null, revision = it.revision + 1) } }
     fun brush(points: List<PointF>, radius: Float, add: Boolean) {

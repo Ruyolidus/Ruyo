@@ -208,11 +208,11 @@ class LocalBookStore(context: Context) {
             val w = obj.getInt("width"); val h = obj.getInt("height")
             require(w > 0 && h > 0 && w.toLong() * h <= 900_000)
             val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"))
-            BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"))
+            BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat())
         }
     }
     private fun writeEdits(dir: File, edits: List<BubbleEdit>) = write(File(dir, "edits.json"), JSONArray().apply {
-        edits.forEach { edit -> put(JSONObject().put("id", edit.id).put("text", edit.japanese).put("margin", edit.margin)
+        edits.forEach { edit -> put(JSONObject().put("id", edit.id).put("text", edit.japanese).put("margin", edit.margin).put("fontScale", edit.fontScale.toDouble())
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
             .put("color", edit.region.backgroundColor).put("interior", pack(edit.region.interior.copyPixels())).put("erase", pack(edit.region.eraseMask))) }
     }.toString())

@@ -86,7 +86,7 @@ private fun AppContent(model: RuyoModel) {
     Scaffold(
         modifier = Modifier.testTag("app-root"),
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbars) },
+        snackbarHost = { SnackbarHost(snackbars, Modifier.imePadding().padding(bottom = if (home) 0.dp else 96.dp)) },
         topBar = {
             Column {
                 AppBar(

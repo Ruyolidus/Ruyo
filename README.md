@@ -27,6 +27,9 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   oversized selections, and regions likely to contain artwork.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
   edited bubble to revise it or restore its original state.
+- Japanese starts at normal dialogue size and automatically reflows/shrinks as needed.
+  Text size and padding are separate controls; releasing either slider recalculates
+  the preview. Short dialogue is no longer enlarged to fill an empty bubble.
 - Every successful replacement preview scrolls into view. Fit failures stay visible
   in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
 - Sample grammar/vocabulary lessons and saved sentences, including your own text.

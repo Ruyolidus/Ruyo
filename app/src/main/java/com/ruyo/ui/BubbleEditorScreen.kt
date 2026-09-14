@@ -2,6 +2,7 @@ package com.ruyo.ui
 
 import android.graphics.Bitmap
 import android.graphics.PointF
+import com.ruyo.reader.BubbleEditRenderer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -34,6 +35,10 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
     var tool by remember(draft.edit.id) { mutableStateOf("Erase text") }
     var radius by remember(draft.edit.id) { mutableFloatStateOf(8f) }
     var showingPreview by remember(draft.edit.id) { mutableStateOf(false) }
+    var padding by remember(draft.edit.id, draft.edit.margin) { mutableFloatStateOf(draft.edit.margin.toFloat()) }
+    var fontScale by remember(draft.edit.id, draft.edit.fontScale) { mutableFloatStateOf(draft.edit.fontScale) }
+    val preferredSize = BubbleEditRenderer.preferredSize(model.opened?.original?.width ?: draft.crop.width, draft.edit.fontScale)
+    val fittedPercent = ((draft.preview?.fit?.fontSize ?: preferredSize) / preferredSize * 100).roundToInt()
     val keyboard = LocalSoftwareKeyboardController.current
     val scroll = rememberLazyListState()
     LaunchedEffect(draft.previewVersion, draft.preview) {
@@ -61,7 +66,7 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                     Text("Red pixels will be removed. Brush only over letters; use Restore to protect artwork.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(AppIcons.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text("Complete text fits inside the safe area", modifier = Modifier.testTag("preview-visible"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (fittedPercent < 99) "Auto-shrunk to $fittedPercent% · Pinch to zoom" else "Whole text fits · Normal lettering size", modifier = Modifier.testTag("preview-visible"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -71,11 +76,20 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                     label = { Text("Japanese text") }, placeholder = { Text("Enter or paste the Japanese dialogue") }, minLines = 2, maxLines = 4,
                     supportingText = { Text("${draft.edit.japanese.length} / 512 · Entered manually in this build") }, modifier = Modifier.fillMaxWidth().testTag("japanese-input"))
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Text size", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(value = fontScale, onValueChange = { fontScale = it },
+                        onValueChangeFinished = { model.changeFontScale(fontScale); if (draft.edit.japanese.isNotBlank()) { keyboard?.hide(); model.preview() } },
+                        valueRange = 0.6f..1.6f, enabled = !model.busy, modifier = Modifier.weight(1f).testTag("text-size"))
+                    Text("${(fontScale * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
+                }
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Text padding", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Slider(value = draft.edit.margin.toFloat(), onValueChange = { model.changeMargin(it.roundToInt()) },
+                    Slider(value = padding, onValueChange = { padding = it },
+                        onValueChangeFinished = { model.changeMargin(padding.roundToInt()); if (draft.edit.japanese.isNotBlank()) { keyboard?.hide(); model.preview() } },
                         valueRange = 2f..maxOf(8f, minOf(draft.edit.region.width, draft.edit.region.height) / 4f), enabled = !model.busy,
                         modifier = Modifier.weight(1f).testTag("text-padding"))
                 }
+                Text("Text shrinks to fit automatically. Padding controls the empty space around it. Both sliders update the preview when released.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 draft.previewError?.let { error ->
                     Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("preview-error"))
                 }

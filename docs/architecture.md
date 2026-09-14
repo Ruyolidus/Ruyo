@@ -59,6 +59,12 @@ or navigation. A removed progress page falls back to the chapter's first page.
 The editor invalidates its preview when text, padding, or masks change. Results are
 bound to the editor's current revision; stale results cannot replace a newer draft.
 Every accepted preview scrolls into view, and rejection reasons remain inline.
+Lettering starts at a normal page-relative size, with a separate saved size scale.
+Padding changes the safe region and automatically reruns fitting on slider release.
+The fitter reserves work for every smaller size down to 6 source pixels, uses
+Android breakText to bound candidate line endings, and reports actual shrinking.
+It can use up to 32 horizontal lines; dense text can require zooming to read.
+The full raster containment gate is unchanged.
 Snackbars are cleared after presentation rather than cancelling their own effect.
 Saving is permitted only with a valid preview for the current draft.
 

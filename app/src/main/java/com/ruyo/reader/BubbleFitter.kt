@@ -50,15 +50,18 @@ class BubbleFitter {
         val breaks = boundaries(text, BreakIterator.getLineInstance(Locale.JAPANESE))
             .filter { it in graphemes && legalBreak(text, it) }
         val centerY = safeRegion.centerY()
-        val budget = LayoutBudget()
-        val steps = ceil((preferredSize - minimumSize) / 2f).toInt()
+        val steps = ceil((preferredSize - minimumSize) / 2f).toInt().coerceAtMost(64)
+        // Reserve shaping work for EVERY size, including the minimum. A difficult
+        // large-font layout must not exhaust the search before shrink-to-fit runs.
         for (step in 0..steps) {
-            val size = maxOf(minimumSize, preferredSize - step * 2f)
+            val budget = LayoutBudget(8_000 / (steps + 1))
+            val size = if (steps == 0) preferredSize else maxOf(minimumSize, preferredSize - (preferredSize - minimumSize) * step / steps)
             paint.textSize = size
             val metrics = paint.fontMetrics
             val lineHeight = ceil(metrics.bottom - metrics.top + size * 0.08f + 4f).toInt()
-            val maxLines = minOf(12, safeRegion.height / lineHeight, graphemes.lastIndex)
-            for (count in 1..maxLines) {
+            val maxLines = minOf(32, safeRegion.height / lineHeight, graphemes.lastIndex)
+            val firstCount = maxOf(1, (paint.measureText(text) / safeRegion.width).toInt()).coerceAtMost(maxOf(1, maxLines))
+            for (count in firstCount..maxLines) {
                 val centeredTop = (centerY - count * lineHeight / 2f).toInt()
                 for (shift in intArrayOf(0, lineHeight / 5, -lineHeight / 5)) {
                     val top = centeredTop + shift
@@ -68,7 +71,7 @@ class BubbleFitter {
                     if (spans.any { it == null || it.count() < size }) continue
                     val validSpans = spans.filterNotNull()
                     val cuts = wrap(text, breaks, validSpans, paint, budget)
-                    if (budget.exhausted) return FitResult.Rejected("No safe layout was found within the layout limit. Try shorter text or a larger bubble.")
+                    if (budget.exhausted) break
                     if (cuts == null) continue
                     val lines = cuts.mapIndexed { i, (start, end) ->
                         val span = validSpans[i]
@@ -88,9 +91,10 @@ class BubbleFitter {
                     }
                     ink.recycle()
                 }
+                if (budget.exhausted) break
             }
         }
-        return FitResult.Rejected("The complete sentence cannot fit at a readable size.")
+        return FitResult.Rejected("The whole text still does not fit after shrinking. Reduce the padding or shorten the text.")
     }
 
     private fun wrap(
@@ -105,10 +109,11 @@ class BubbleFitter {
             if (line == spans.size) return if (start == text.length) emptyList() else null
             if (start == text.length || (line to start) in failed) return null
             val remaining = spans.size - line - 1
+            val fittingEnd = budget.fittingEnd(paint, text, start, spans[line].count() - 4f)
             for (end in breaks.asReversed()) {
                 if (budget.exhausted) return null
-                if (end <= start || (remaining > 0 && end == text.length)) continue
-                if (budget.measure(paint, text, start, end) > spans[line].count() - 4f) continue
+                if (end <= start || end > fittingEnd || (remaining > 0 && end == text.length)) continue
+                if (remaining == 0 && end != text.length) continue
                 val tail = visit(line + 1, end)
                 if (tail != null) return listOf(start to end) + tail
             }
@@ -119,13 +124,17 @@ class BubbleFitter {
     }
 
     /** Bound native shaping calls even for adversarially long or awkward text. */
-    private class LayoutBudget {
-        private var remaining = 8_000
+    private class LayoutBudget(private var remaining: Int) {
+        private val fitted = mutableMapOf<Pair<Int, Float>, Int>()
         var exhausted = false
             private set
-        fun measure(paint: TextPaint, text: String, start: Int, end: Int): Float {
-            if (remaining-- <= 0) { exhausted = true; return Float.POSITIVE_INFINITY }
-            return paint.measureText(text, start, end)
+        fun fittingEnd(paint: TextPaint, text: String, start: Int, width: Float): Int {
+            val key = start to width
+            fitted[key]?.let { return it }
+            if (remaining-- <= 0) { exhausted = true; return start }
+            val end = start + paint.breakText(text, start, text.length, true, width, null)
+            fitted[key] = end
+            return end
         }
     }
 

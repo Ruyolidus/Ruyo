@@ -113,7 +113,7 @@ object SampleChapter {
         val sourceCrop = Bitmap.createBitmap(page, bounds.left.toInt(), bounds.top.toInt(), w, h)
         val repaired = FlatBubbleRepair.repair(sourceCrop, originalInk.ink, interior, background)
         originalInk.ink.recycle()
-        val replacement = fitter.fit(line.japanese, safe, preferredSize = 70f, minimumSize = 34f)
+        val replacement = fitter.fit(line.japanese, safe, preferredSize = 40f, minimumSize = 24f)
         check(replacement is FitResult.Accepted) { "Japanese sample did not fit: $replacement" }
         val translated = page.copy(Bitmap.Config.ARGB_8888, true)
         Canvas(translated).apply {

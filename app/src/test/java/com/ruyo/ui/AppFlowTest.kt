@@ -86,7 +86,7 @@ class AppFlowTest {
         awaitState { model.draft?.previewVersion == 2 && !model.busy }
         compose.onNodeWithTag("preview-visible").assertIsDisplayed()
         assertFalse(firstPreview.sameAs(model.draft!!.preview!!.crop))
-        compose.onNodeWithTag("japanese-input").performScrollTo().performTextReplacement("あ".repeat(512))
+        compose.onNodeWithTag("japanese-input").performScrollTo().performTextReplacement("W".repeat(512))
         compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
         awaitState { model.draft?.previewError != null && !model.busy }
         compose.onNodeWithTag("preview-error").performScrollTo().assertIsDisplayed()
@@ -95,6 +95,10 @@ class AppFlowTest {
         compose.onNodeWithTag("japanese-input").performScrollTo().performTextReplacement("待って！")
         compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
         awaitState { model.draft?.previewVersion == 3 && !model.busy }
+        compose.onNodeWithTag("preview-visible").assertIsDisplayed()
+        val beforePadding = model.draft!!.previewVersion
+        compose.onNodeWithTag("text-padding").performScrollTo().performTouchInput { click(Offset(width * 0.18f, height * 0.5f)) }
+        awaitState { model.draft!!.previewVersion > beforePadding && !model.busy }
         compose.onNodeWithTag("preview-visible").assertIsDisplayed()
         compose.onNodeWithTag("save-edit").performClick()
         awaitTag("book-reader")
