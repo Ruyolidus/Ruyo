@@ -1,8 +1,8 @@
 package com.ruyo.ui
 
-import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.asAndroidBitmap
+import com.github.takahirom.roborazzi.captureRoboImage
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.core.app.ApplicationProvider
@@ -72,6 +72,7 @@ class AppFlowTest {
         compose.onNodeWithTag("japanese-input").performTextInput("待って！")
         compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
         compose.waitUntil(15_000) { model.draft?.preview != null }
+        compose.onNodeWithTag("editor-canvas").performScrollTo()
         capture("bubble-preview")
         compose.onNodeWithTag("save-edit").performClick()
         awaitTag("book-reader")
@@ -86,10 +87,12 @@ class AppFlowTest {
     private fun awaitTag(tag: String) { compose.waitUntil(20_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }; compose.waitForIdle() }
     private fun capture(name: String, tag: String = "app-root") {
         compose.waitForIdle()
-        val bitmap = compose.onNodeWithTag(tag).captureToImage().asAndroidBitmap()
-        assertTrue(bitmap.width > 100 && bitmap.height > 100)
         val file = File(System.getProperty("ruyo.previewDir"), "ui-$name.png")
         file.parentFile?.mkdirs()
-        file.outputStream().use { assertTrue(bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)) }
+        compose.onNodeWithTag(tag).captureRoboImage(file.absolutePath)
+        assertTrue("The screen capture must be written", file.isFile)
+        val bitmap = requireNotNull(BitmapFactory.decodeFile(file.path))
+        assertTrue(bitmap.width > 100 && bitmap.height > 100)
+        bitmap.recycle()
     }
 }

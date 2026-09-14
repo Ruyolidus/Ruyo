@@ -38,6 +38,7 @@ android {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
             it.maxHeapSize = "2g"
+            it.systemProperty("roborazzi.test.record", "true")
             it.systemProperty("ruyo.previewDir", layout.buildDirectory.dir("test-previews").get().asFile.path)
         }
     }
@@ -61,6 +62,8 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation(composeBom)
     testImplementation("androidx.compose.ui:ui-test-junit4")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.50.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.50.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.16")

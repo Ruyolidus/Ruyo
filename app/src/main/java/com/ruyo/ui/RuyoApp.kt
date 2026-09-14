@@ -177,7 +177,7 @@ private fun LibraryScreen(model: RuyoModel, onImport: () -> Unit) {
         if (sampleVisible && model.ready) item(key = "sample") {
             BookCover(model.samples.firstOrNull()?.translated, "Before the rain", "Sample · 3 panels", "book-sample", onClick = model::openSample)
         }
-        if (filter != "Samples") items(books, key = { it.id }) { book ->
+        if (filter != "Samples" && model.ready) items(books, key = { it.id }) { book ->
             val cover by produceState<Bitmap?>(null, book.id) { value = withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
             BookCover(cover, book.title, "Imported image", "book-${book.id}") { model.openBook(book) }
         }
