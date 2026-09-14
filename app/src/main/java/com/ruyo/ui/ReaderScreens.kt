@@ -33,6 +33,9 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ruyo.data.SavedLine
+import com.ruyo.data.OpenBook
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.distinctUntilChanged
 import com.ruyo.sample.SampleChapter
 
 @Composable
@@ -58,28 +61,50 @@ internal fun SampleReader(model: RuyoModel) {
 
 @Composable
 internal fun BookReader(model: RuyoModel) {
-    val book = model.opened ?: return
+    val book = model.chapter ?: return
+    val position = model.readingPosition
+    val start = book.pages.indexOfFirst { it.id == position?.pageId }.coerceAtLeast(0)
+    val scroll = rememberLazyListState(start, position?.offset ?: 0)
+    LaunchedEffect(scroll, book.id) {
+        snapshotFlow { scroll.firstVisibleItemIndex to scroll.firstVisibleItemScrollOffset }.distinctUntilChanged().collect { (index, offset) ->
+            book.pages.getOrNull(index)?.let { model.rememberPosition(it.id, offset) }
+        }
+    }
+    DisposableEffect(book.id) { onDispose { model.flushPosition() } }
     Column(Modifier.fillMaxSize().testTag("book-reader")) {
+        ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}")
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
-            Text("Tap the empty background inside a light bubble. Scroll or pinch to reach it.", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+            Text("Tap the empty background inside a light bubble. Scroll or pinch to reach it.", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
-        } else ReaderControls(model.japanese, { model.japanese = it }, "${book.edits.size} ${if (book.edits.size == 1) "edit" else "edits"}")
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B))) {
-            item {
-                ReaderPage(if (model.japanese && !model.selecting) book.displayed else book.original, book.book.title, "imported-page") { x, y ->
+        }
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("chapter-scroll"), state = scroll) {
+            itemsIndexed(book.pages, key = { _, page -> page.id }) { index, page ->
+                var retry by remember(page.id) { mutableIntStateOf(0) }
+                val loaded by produceState<Result<OpenBook>?>(null, book.id, page.id, model.pageRevision, retry) {
+                    value = null
+                    value = try { Result.success(model.pageLoader.load(book, page)) }
+                    catch (error: CancellationException) { throw error }
+                    catch (error: Exception) { Result.failure(error) }
+                }
+                val data = loaded?.getOrNull()
+                if (data == null) Box(Modifier.fillMaxWidth().aspectRatio(page.width.toFloat() / page.height), contentAlignment = Alignment.Center) {
+                    if (loaded == null) CircularProgressIndicator(Modifier.size(24.dp), color = Color.White, strokeWidth = 2.dp)
+                    else Column(Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Page ${index + 1} could not be opened", color = Color.White)
+                        TextButton(onClick = { retry++ }) { Text("Retry", color = Color.White) }
+                    }
+                } else ReaderPage(if (model.japanese && !model.selecting) data.displayed else data.original, "Page ${index + 1}", if (index == 0) "imported-page" else "imported-page-${page.id}") { x, y ->
                     if (!model.busy) {
-                        if (model.selecting) model.selectBubble(x, y)
-                        else if (model.japanese) book.edits.findLast { it.region.contains(x, y) }?.let(model::studyEdit)
+                        if (model.selecting) model.selectBubble(x, y, data)
+                        else if (model.japanese) data.edits.findLast { it.region.contains(x, y) }?.let { model.studyEdit(it, data) }
                     }
                 }
             }
         }
         Surface(color = MaterialTheme.colorScheme.surface) {
-            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).navigationBarsPadding()) {
-                Text(if (model.selecting) "Plain bubbles only in this build" else if (book.edits.isEmpty()) "Use the pencil to edit your first bubble" else "Tap an edited bubble to save its Japanese text",
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (book.book.reduced) Text("Reduced image · full-resolution reading comes later", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(if (model.selecting) "Plain bubbles · Tap inside an existing edit to revise it" else "Pencil to edit · Tap Japanese to save · Pinch to zoom",
+                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).navigationBarsPadding(),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

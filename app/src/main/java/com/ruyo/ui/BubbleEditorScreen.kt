@@ -9,6 +9,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -34,8 +35,12 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
     var radius by remember(draft.edit.id) { mutableFloatStateOf(8f) }
     var showingPreview by remember(draft.edit.id) { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
-    LaunchedEffect(draft.preview) { showingPreview = draft.preview != null }
-    LazyColumn(Modifier.fillMaxSize().imePadding().testTag("bubble-editor"), contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+    val scroll = rememberLazyListState()
+    LaunchedEffect(draft.previewVersion, draft.preview) {
+        showingPreview = draft.preview != null
+        if (showingPreview) scroll.animateScrollToItem(0)
+    }
+    LazyColumn(Modifier.fillMaxSize().imePadding().testTag("bubble-editor"), state = scroll, contentPadding = PaddingValues(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
         item {
             Column {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -56,7 +61,7 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                     Text("Red pixels will be removed. Brush only over letters; use Restore to protect artwork.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(AppIcons.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text("Complete text fits inside the safe area", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Complete text fits inside the safe area", modifier = Modifier.testTag("preview-visible"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -71,8 +76,11 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                         valueRange = 2f..maxOf(8f, minOf(draft.edit.region.width, draft.edit.region.height) / 4f), enabled = !model.busy,
                         modifier = Modifier.weight(1f).testTag("text-padding"))
                 }
+                draft.previewError?.let { error ->
+                    Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("preview-error"))
+                }
                 Button(onClick = { keyboard?.hide(); model.preview() }, enabled = draft.edit.japanese.isNotBlank() && !model.busy,
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("preview-edit")) { Text("Preview replacement") }
+                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("preview-edit")) { Text(if (model.busy) "Rendering…" else "Preview replacement") }
                 if (draft.existing) TextButton(onClick = model::removeEdit, enabled = !model.busy, modifier = Modifier.fillMaxWidth()) { Text("Restore original bubble") }
             }
         }

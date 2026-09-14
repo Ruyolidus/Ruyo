@@ -57,15 +57,29 @@ private fun AppContent(model: RuyoModel) {
         }
     }
     val snackbars = remember { SnackbarHostState() }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::importImage) }
+    var pickerTarget by remember { mutableStateOf<String?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) model.importImages(uris, pickerTarget)
+        pickerTarget = null
+    }
+    var addComic by remember { mutableStateOf(false) }
+    var discardImport by remember { mutableStateOf(false) }
+    fun pickImages(appendTo: String? = null) { pickerTarget = appendTo; picker.launch(arrayOf("image/*")) }
     var discard by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf<LocalBook?>(null) }
-    fun back() { if (model.route == "editor") discard = true else model.home() }
+    fun back() {
+        when (model.route) {
+            "editor" -> discard = true
+            "import" -> discardImport = true
+            "pages" -> model.reader()
+            else -> model.home()
+        }
+    }
     BackHandler(model.route != "home" && model.lesson == null) { if (!model.busy) back() }
     LaunchedEffect(model.message) {
         model.message?.let { message ->
-            model.message = null
             snackbars.showSnackbar(message, withDismissAction = true)
+            if (model.message == message) model.message = null
         }
     }
     val home = model.route == "home"
@@ -78,17 +92,24 @@ private fun AppContent(model: RuyoModel) {
                 AppBar(
                     title = when (model.route) {
                         "sample" -> "Before the rain"
-                        "book" -> model.opened?.book?.title.orEmpty()
+                        "book" -> model.chapter?.title.orEmpty()
+                        "pages" -> "Chapter pages"
+                        "import" -> "Add chapter"
+                        "web" -> "Browse"
                         "editor" -> "Edit bubble"
                         else -> when (model.tab) { "saved" -> "Saved"; "settings" -> "Settings"; else -> "Library" }
                     },
                     back = if (home) null else ({ if (!model.busy) back() }),
                     actions = {
                         when {
-                            home && model.tab == "library" -> IconButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = !model.busy) { Icon(AppIcons.Plus, "Import image") }
+                            home && model.tab == "library" -> {
+                                IconButton(onClick = model::browse, enabled = !model.busy) { Icon(AppIcons.Web, "Browse websites") }
+                                IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add comic") }
+                            }
                             model.route == "book" -> {
                                 IconButton(onClick = { model.selecting = !model.selecting }, enabled = !model.busy) { Icon(if (model.selecting) AppIcons.Close else AppIcons.Edit, if (model.selecting) "Cancel selection" else "Edit bubbles") }
-                                IconButton(onClick = { remove = model.opened?.book }, enabled = !model.busy) { Icon(AppIcons.Trash, "Remove image") }
+                                IconButton(onClick = model::managePages, enabled = !model.busy) { Icon(AppIcons.Pages, "Manage chapter pages") }
+                                IconButton(onClick = { remove = model.chapter }, enabled = !model.busy) { Icon(AppIcons.Trash, "Remove chapter") }
                             }
                             model.route == "editor" -> TextButton(onClick = model::saveEdit, enabled = model.draft?.preview != null && !model.busy, modifier = Modifier.testTag("save-edit")) { Text("Save") }
                         }
@@ -116,23 +137,43 @@ private fun AppContent(model: RuyoModel) {
         Box(Modifier.fillMaxSize().padding(padding)) {
             when (model.route) {
                 "sample" -> SampleReader(model)
-                "book" -> BookReader(model)
+                "book" -> key(model.chapter?.id) { BookReader(model) }
+                "pages" -> ChapterPagesScreen(model) { pickImages(model.chapter?.id) }
+                "import" -> ImportReviewScreen(model) { pickImages(model.importing?.appendTo) }
+                "web" -> WebBrowserScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
                 else -> when (model.tab) {
                     "saved" -> SavedScreen(model)
                     "settings" -> SettingsScreen(model)
-                    else -> LibraryScreen(model) { picker.launch(arrayOf("image/*")) }
+                    else -> LibraryScreen(model) { addComic = true }
                 }
             }
         }
+    }
+    if (addComic) AlertDialog(onDismissRequest = { addComic = false }, title = { Text("Add a comic") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Import several images as one chapter, or open a chapter link.")
+            OutlinedButton(onClick = { addComic = false; pickImages() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Image, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Choose images") }
+            OutlinedButton(onClick = { addComic = false; model.browse() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Web, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Open website") }
+        } }, confirmButton = {}, dismissButton = { TextButton(onClick = { addComic = false }) { Text("Cancel") } })
+    if (discardImport) AlertDialog(onDismissRequest = { discardImport = false }, title = { Text("Discard this import?") },
+        text = { Text("These new pages have not been saved to your library.") },
+        confirmButton = { TextButton(onClick = { discardImport = false; model.discardImport() }) { Text("Discard") } },
+        dismissButton = { TextButton(onClick = { discardImport = false }) { Text("Keep reviewing") } })
+    model.importProgress?.let { progress ->
+        AlertDialog(onDismissRequest = {}, title = { Text("Preparing chapter") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                LinearProgressIndicator(progress = { progress.done.toFloat() / progress.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth())
+                Text("${progress.done} of ${progress.total} images ready")
+            } }, confirmButton = {}, dismissButton = { TextButton(onClick = model::cancelImportWork) { Text("Cancel import") } })
     }
     model.lesson?.let { StudySheet(model, it) }
     if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard this edit?") },
         text = { Text("Changes since your last save will be lost. The original image is kept.") },
         confirmButton = { TextButton(onClick = { discard = false; model.cancelEditor() }) { Text("Discard") } },
         dismissButton = { TextButton(onClick = { discard = false }) { Text("Keep editing") } })
-    remove?.let { book -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove image?") },
-        text = { Text("Remove this image and its bubble edits from Ruyo? The file you imported from your device will stay where it is.") },
+    remove?.let { book -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove chapter?") },
+        text = { Text("Remove this chapter, its pages, and bubble edits from Ruyo? Original files outside Ruyo stay where they are.") },
         confirmButton = { TextButton(onClick = { remove = null; model.removeBook(book) }) { Text("Remove") } },
         dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancel") } }) }
 }
@@ -178,21 +219,21 @@ private fun LibraryScreen(model: RuyoModel, onImport: () -> Unit) {
             BookCover(model.samples.firstOrNull()?.translated, "Before the rain", "Sample · 3 panels", "book-sample", onClick = model::openSample)
         }
         if (filter != "Samples" && model.ready) items(books, key = { it.id }) { book ->
-            val cover by produceState<Bitmap?>(null, book.id) { value = withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
-            BookCover(cover, book.title, "Imported image", "book-${book.id}") { model.openBook(book) }
+            val cover by produceState<Bitmap?>(null, book.id, book.pages.first().id) { value = withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
+            BookCover(cover, book.title, "${book.pages.size} ${if (book.pages.size == 1) "page" else "pages"}", "book-${book.id}") { model.openBook(book) }
         }
         if (model.ready && (filter == "Imported" && books.isEmpty() || query.isNotBlank() && books.isEmpty() && !sampleVisible)) item(span = { GridItemSpan(maxLineSpan) }) {
-            EmptyState(AppIcons.Image, if (query.isBlank()) "No imported images" else "No matching titles",
-                if (query.isBlank()) "Add a comic image from your device to start editing its bubbles." else "Try another title.") {
-                if (query.isBlank()) Button(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Import image") }
+            EmptyState(AppIcons.Image, if (query.isBlank()) "No imported chapters" else "No matching titles",
+                if (query.isBlank()) "Choose your comic images or open a chapter link to start reading." else "Try another title.") {
+                if (query.isBlank()) Button(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add chapter") }
             }
         }
         if (model.books.isEmpty() && filter == "All" && query.isBlank() && model.ready) item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("Add your own comic", style = MaterialTheme.typography.titleMedium)
-                Text("Import an image to select bubbles and try your own Japanese text.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Import image") }
+                Text("Choose multiple images or open a chapter link. Put the pages in order, then read and edit their bubbles.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add chapter") }
             }
         }
     }
@@ -252,15 +293,16 @@ private fun SettingsScreen(model: RuyoModel) {
         }
         item {
             SectionLabel("On this device")
-            SettingLine("Imported images", model.books.size.toString())
+            SettingLine("Imported chapters", model.books.size.toString())
+            SettingLine("Pages", model.books.sumOf { it.pages.size }.toString())
             SettingLine("Saved sentences", model.saved.size.toString())
             Text("Images and edits are stored on this device. Your source files are kept intact.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.2.0 preview")
+            SettingLine("Ruyo", "0.3.0 preview")
             Text("Read comics. Study Japanese.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("This build includes manual bubble editing and sample lessons. AI translation and website imports are being developed.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("This build includes multi-image chapters, website image import, manual bubble editing, and sample lessons. AI translation and OCR are next.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

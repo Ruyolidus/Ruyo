@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         versionCode = providers.environmentVariable("GITHUB_RUN_NUMBER")
             .orNull?.toIntOrNull() ?: 1
-        versionName = "0.2.0"
+        versionName = "0.3.0"
     }
 
     buildTypes {
