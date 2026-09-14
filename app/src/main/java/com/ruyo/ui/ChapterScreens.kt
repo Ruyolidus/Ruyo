@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -27,7 +28,7 @@ import java.io.File
 @Composable
 internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
     val draft = model.importing ?: return
-    Column(Modifier.fillMaxSize().testTag("import-review")) {
+    Column(Modifier.fillMaxSize().imePadding().testTag("import-review")) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
                 Text(if (draft.appendTo == null) "Review your chapter" else "Add pages to chapter", style = MaterialTheme.typography.titleMedium)
@@ -69,23 +70,24 @@ internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
 @Composable
 internal fun ChapterPagesScreen(model: RuyoModel, onAppend: () -> Unit) {
     val book = model.chapter ?: return
-    var title by remember(book) { mutableStateOf(book.title) }
-    var pages by remember(book) { mutableStateOf(book.pages) }
+    var title by rememberSaveable(book.id) { mutableStateOf(book.title) }
+    var pageIds by rememberSaveable(book.id) { mutableStateOf(book.pages.map { it.id }) }
+    val pages = pageIds.mapNotNull { id -> book.pages.firstOrNull { it.id == id } }
     var remove by remember { mutableStateOf<LocalPage?>(null) }
-    Column(Modifier.fillMaxSize().testTag("chapter-pages")) {
+    Column(Modifier.fillMaxSize().imePadding().testTag("chapter-pages")) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { OutlinedTextField(title, { title = it.take(120) }, enabled = !model.busy, label = { Text("Chapter title") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${pages.size} pages", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = { pages = pages.sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) } }, enabled = !model.busy && pages.size > 1) { Text("Sort by name") }
+                    TextButton(onClick = { pageIds = pages.sortedWith { a, b -> NaturalOrder.compare(a.name, b.name) }.map { it.id } }, enabled = !model.busy && pages.size > 1) { Text("Sort by name") }
                 }
             }
             itemsIndexed(pages, key = { _, page -> page.id }) { index, page ->
                 val thumb by produceState<Bitmap?>(null, page.id) { value = withContext(Dispatchers.IO) { model.store.pageThumbnail(book, page) } }
                 PageOrderRow(page, index, pages.size, thumb, !model.busy, { delta ->
                     val list = pages.toMutableList(); val target = index + delta
-                    if (target in list.indices) { list.add(target, list.removeAt(index)); pages = list }
+                    if (target in list.indices) { list.add(target, list.removeAt(index)); pageIds = list.map { it.id } }
                 }, if (pages.size > 1) ({ remove = page }) else null)
             }
             item {
@@ -99,7 +101,7 @@ internal fun ChapterPagesScreen(model: RuyoModel, onAppend: () -> Unit) {
         }
     }
     remove?.let { page -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove this page?") }, text = { Text("Its bubble edits will be removed when you save the chapter changes.") },
-        confirmButton = { TextButton(onClick = { pages = pages.filterNot { it.id == page.id }; remove = null }) { Text("Remove") } },
+        confirmButton = { TextButton(onClick = { pageIds = pageIds.filterNot { it == page.id }; remove = null }) { Text("Remove") } },
         dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancel") } }) }
 }
 
