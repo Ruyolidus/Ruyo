@@ -13,20 +13,36 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope
+## Current scope (0.2.0)
 
-Milestone 1 proves fitting and composition on known sample masks and flat colors.
-It includes an offline reader, static sample lessons, saved sentences, and image
-import for preview. The sample is deliberately independent of a model or API key.
+The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
+The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
+across the package boundary.
 
-The image preview caps decoded pixel count and dimensions. Full-resolution long
-webtoons will need region decoding and a bounded tile cache. Do not run future
-OCR against the downscaled preview and assume it preserves tiny dialogue.
+The app has a compact library, full-width reader, saved sentences, and persistent
+light/dark appearance settings. `RuyoModel` retains loaded pages and editing state
+across configuration changes. Explicitly saved images, masks, edits, and sentences
+persist in private files. Unsaved drafts are not promised to survive process death.
+
+`BubbleSelector` uses a user-selected blank pixel to find an enclosed, light,
+nearly uniform background. It fills lettering holes, estimates a background color,
+and proposes an erasure mask. This is a limited heuristic, with size, edge,
+flatness, and foreground-density gates; it does not claim to understand artwork.
+The editor displays its mask and allows correction with erase/restore brushes.
+Every replacement passes the complete-text raster containment gate before saving.
+Composition applies only the permitted edit footprint, even when bounding boxes
+overlap. An invalid fit leaves stored edits intact. Saving uses atomic JSON writes.
+
+Image imports cap pixel count and dimensions. Full-resolution long webtoons still
+need region decoding and a bounded tile cache. Do not run future OCR against the
+downscaled import and assume it preserves tiny dialogue. The editor currently
+supports light, flat bubbles and manually entered translations; source images
+stay intact for later reprocessing or restoring an individual bubble.
 
 ## Next stages
 
-1. Add manual bubble selection and mask correction on a local image. Establish
-   geometry and foreground/background confidence gates on permitted sample pages.
+1. Extend assisted selection with boundary correction and validate on more permitted
+   comic pages. Current light-bubble selection and erasure-mask correction are implemented.
 2. Add ML Kit Text Recognition as an on-device OCR baseline. It reads explicitly
    supplied images; it does not capture or translate the screen automatically.
    Bubble segmentation and glyph masks remain separate components.
@@ -52,7 +68,8 @@ OCR against the downscaled preview and assume it preserves tiny dialogue.
 ## Testing strategy
 
 Run fitting and raster tests, lint, and APK assembly in GitHub Actions. Inspect
-the renderer's before/after PNGs. Then test installation, scrolling, taps, image
+the renderer's before/after PNGs. Compose flow tests exercise navigation, saved sentences, theme persistence, and
+manual image editing, and export screenshots of those screens. Then test installation, scrolling, taps, image
 import, saved sentences, and repeated preview updates on a physical phone.
 
 Later quality measurements must report automation coverage and accepted-result

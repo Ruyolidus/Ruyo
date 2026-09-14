@@ -36,6 +36,11 @@ jobs:
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: Test, lint, and assemble
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Verify application ID
+        run: |
+          ruyo_package_info=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk)
+          echo "$ruyo_package_info"
+          [[ "$ruyo_package_info" == "package: name='com.ruyo' "* ]]
       - name: Upload installable APK
         uses: actions/upload-artifact@v4
         with:
@@ -61,9 +66,16 @@ jobs:
           Download **Ruyo-preview** from this run's Artifacts section, extract the ZIP,
           and open **app-debug.apk** on your Android phone (Android 9 or newer).
 
-          This build includes the offline sample reader, horizontal Japanese bubble
-          replacement, prewritten lessons, saved sentences, and local image preview.
-          Live AI translation and automatic detection on imported images are not yet implemented.
+          The application ID is **com.ruyo**, including this debug build.
+          It installs separately from the first com.ruyolidus.ruyo.debug preview.
+
+          This build includes the redesigned library and reader, persistent image
+          imports, manual bubble cleanup and Japanese replacement, sample lessons,
+          saved sentences, and theme settings. Tap the pencil in an imported image,
+          then tap the empty background inside an enclosed light bubble.
+          Live AI translation, OCR, and website imports are not yet implemented.
+
+          Ruyo-checks includes native renderer tests and actual app-screen PNGs.
 
           The runner generates a debug signing key. A later build may have a different
           signing identity. If Android refuses an update, uninstall the earlier preview

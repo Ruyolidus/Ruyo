@@ -1,4 +1,4 @@
-package com.ruyolidus.ruyo.reader
+package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
@@ -9,7 +9,6 @@ import android.icu.text.BreakIterator
 import android.text.TextPaint
 import java.util.Locale
 import kotlin.math.ceil
-import kotlin.math.floor
 
 data class TextLine(val start: Int, val end: Int, val x: Float, val baseline: Float)
 
@@ -50,6 +49,8 @@ class BubbleFitter {
         }
         val breaks = boundaries(text, BreakIterator.getLineInstance(Locale.JAPANESE))
             .filter { it in graphemes && legalBreak(text, it) }
+        val centerY = safeRegion.centerY()
+        val budget = LayoutBudget()
         val steps = ceil((preferredSize - minimumSize) / 2f).toInt()
         for (step in 0..steps) {
             val size = maxOf(minimumSize, preferredSize - step * 2f)
@@ -58,7 +59,7 @@ class BubbleFitter {
             val lineHeight = ceil(metrics.bottom - metrics.top + size * 0.08f + 4f).toInt()
             val maxLines = minOf(12, safeRegion.height / lineHeight, graphemes.lastIndex)
             for (count in 1..maxLines) {
-                val centeredTop = (safeRegion.height - count * lineHeight) / 2
+                val centeredTop = (centerY - count * lineHeight / 2f).toInt()
                 for (shift in intArrayOf(0, lineHeight / 5, -lineHeight / 5)) {
                     val top = centeredTop + shift
                     val spans = (0 until count).map { line ->
@@ -66,7 +67,9 @@ class BubbleFitter {
                     }
                     if (spans.any { it == null || it.count() < size }) continue
                     val validSpans = spans.filterNotNull()
-                    val cuts = wrap(text, breaks, validSpans, paint) ?: continue
+                    val cuts = wrap(text, breaks, validSpans, paint, budget)
+                    if (budget.exhausted) return FitResult.Rejected("No safe layout was found within the layout limit. Try shorter text or a larger bubble.")
+                    if (cuts == null) continue
                     val lines = cuts.mapIndexed { i, (start, end) ->
                         val span = validSpans[i]
                         TextLine(
@@ -95,6 +98,7 @@ class BubbleFitter {
         breaks: List<Int>,
         spans: List<IntRange>,
         paint: TextPaint,
+        budget: LayoutBudget,
     ): List<Pair<Int, Int>>? {
         val failed = mutableSetOf<Pair<Int, Int>>()
         fun visit(line: Int, start: Int): List<Pair<Int, Int>>? {
@@ -102,8 +106,9 @@ class BubbleFitter {
             if (start == text.length || (line to start) in failed) return null
             val remaining = spans.size - line - 1
             for (end in breaks.asReversed()) {
+                if (budget.exhausted) return null
                 if (end <= start || (remaining > 0 && end == text.length)) continue
-                if (paint.measureText(text, start, end) > spans[line].count() - 4f) continue
+                if (budget.measure(paint, text, start, end) > spans[line].count() - 4f) continue
                 val tail = visit(line + 1, end)
                 if (tail != null) return listOf(start to end) + tail
             }
@@ -111,6 +116,17 @@ class BubbleFitter {
             return null
         }
         return visit(0, 0)
+    }
+
+    /** Bound native shaping calls even for adversarially long or awkward text. */
+    private class LayoutBudget {
+        private var remaining = 8_000
+        var exhausted = false
+            private set
+        fun measure(paint: TextPaint, text: String, start: Int, end: Int): Float {
+            if (remaining-- <= 0) { exhausted = true; return Float.POSITIVE_INFINITY }
+            return paint.measureText(text, start, end)
+        }
     }
 
     private fun boundaries(text: String, iterator: BreakIterator): List<Int> {
@@ -139,4 +155,3 @@ class BubbleFitter {
         return false
     }
 }
-
