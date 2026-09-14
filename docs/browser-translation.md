@@ -1,6 +1,6 @@
 # Browser translation and the next implementation stage
 
-Status: implementation plan, not a claim that live translation exists in 0.3.1.
+Status: implementation plan, not a claim that live translation exists in 0.3.2.
 
 ## Reader behavior
 
@@ -19,7 +19,7 @@ pipeline. Browsing alone never starts paid model requests.
 ## Image quality comes before OCR
 
 The original 0.3 working-image limit of 2 MP reduced thin lettering on long strips.
-Version 0.3.1 raises new working copies to 6 MP, still with an 8192-pixel dimension
+Version 0.3.2 raises new working copies to 6 MP, still with an 8192-pixel dimension
 limit, and prefers the largest declared responsive website image when available.
 It preserves the original bytes. Neither a larger limit nor pinch zoom can restore
 detail already missing from a stored working copy.
@@ -135,3 +135,22 @@ provider output, rate limits, offline retries, and exact source restoration. No
 real user's key is required in CI: transport fixtures and injected credentials
 exercise request routing and persistence; live-provider smoke testing uses an
 explicitly configured test profile and never publishes its secret.
+
+
+## Language and source-style matching
+
+The target is configurable; Japanese is only the default. Translation cache keys,
+provider requests, OCR correction, lessons, and rendered revisions must carry
+explicit source and target languages. RTL scripts require real shaping, not reversing
+strings. Learning-level explanations must use a language-appropriate scheme; JLPT
+labels apply to Japanese only.
+
+The 0.3.2 editor estimates original visible letter height and exposes four system
+font families plus bold/italic. This is a useful manual foundation, not automatic
+font identification. Extend OCR regions with observed line height, weight, width,
+color, stroke/shadow, alignment, and a broad font-style estimate. A vision-capable
+model may assist classification when selected; inexpensive text-only translation
+providers must remain usable without it. Choose a script-capable licensed font,
+preserve emphasis, and allow overrides. Exact font identification from raster text
+cannot be promised. Additional licensed TTF/OTF imports and font packs need their
+own validation, persistence, coverage checks, and fallback behavior before shipping.

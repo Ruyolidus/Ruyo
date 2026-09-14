@@ -26,7 +26,7 @@ data class LocalBook(
 data class OpenBook(val book: LocalBook, val original: Bitmap, val displayed: Bitmap, val edits: List<BubbleEdit>, val page: LocalPage = book.pages.first())
 data class StagedPage(val page: LocalPage, val folder: File)
 data class ReadingPosition(val pageId: String, val offset: Int)
-data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null)
+data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null, val languageTag: String = "ja")
 
 /** Disk operations belong on IO. book.json is the commit point for a chapter import. */
 class LocalBookStore(context: Context) {
@@ -191,12 +191,12 @@ class LocalBookStore(context: Context) {
     @Synchronized fun savedLines(): List<SavedLine> {
         if (!savedFile.exists()) return emptyList()
         val list = JSONArray(read(savedFile))
-        return (0 until list.length()).map { i -> list.getJSONObject(i).let { SavedLine(it.getString("id"), it.getString("japanese"), it.getString("source"), it.optString("sampleId").takeIf(String::isNotBlank)) } }
+        return (0 until list.length()).map { i -> list.getJSONObject(i).let { SavedLine(it.getString("id"), it.getString("japanese"), it.getString("source"), it.optString("sampleId").takeIf(String::isNotBlank), it.optString("language", "ja")) } }
     }
     @Synchronized fun toggleSaved(line: SavedLine): List<SavedLine> {
         val lines = savedLines()
         val next = if (lines.any { it.id == line.id }) lines.filterNot { it.id == line.id } else listOf(line) + lines
-        write(savedFile, JSONArray().apply { next.forEach { put(JSONObject().put("id", it.id).put("japanese", it.japanese).put("source", it.source).put("sampleId", it.sampleId.orEmpty())) } }.toString())
+        write(savedFile, JSONArray().apply { next.forEach { put(JSONObject().put("id", it.id).put("japanese", it.japanese).put("source", it.source).put("sampleId", it.sampleId.orEmpty()).put("language", it.languageTag)) } }.toString())
         return next
     }
 
@@ -208,11 +208,17 @@ class LocalBookStore(context: Context) {
             val w = obj.getInt("width"); val h = obj.getInt("height")
             require(w > 0 && h > 0 && w.toLong() * h <= 900_000)
             val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"))
-            BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat())
+            BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat(),
+                languageTag = obj.optString("language", "ja"), fontFamily = obj.optString("fontFamily", "sans-serif"),
+                bold = obj.optBoolean("bold"), italic = obj.optBoolean("italic"),
+                sourceLetterHeight = obj.optDouble("sourceLetterHeight", Double.NaN).toFloat().takeIf { it.isFinite() && it > 0f },
+                matchSourceSize = obj.optBoolean("matchSourceSize"))
         }
     }
     private fun writeEdits(dir: File, edits: List<BubbleEdit>) = write(File(dir, "edits.json"), JSONArray().apply {
         edits.forEach { edit -> put(JSONObject().put("id", edit.id).put("text", edit.japanese).put("margin", edit.margin).put("fontScale", edit.fontScale.toDouble())
+            .put("language", edit.languageTag).put("fontFamily", edit.fontFamily).put("bold", edit.bold).put("italic", edit.italic)
+            .put("sourceLetterHeight", edit.sourceLetterHeight?.toDouble()).put("matchSourceSize", edit.matchSourceSize)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
             .put("color", edit.region.backgroundColor).put("interior", pack(edit.region.interior.copyPixels())).put("erase", pack(edit.region.eraseMask))) }
     }.toString())

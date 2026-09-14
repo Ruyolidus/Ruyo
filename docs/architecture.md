@@ -7,13 +7,13 @@ OpenCV or an inference runtime when real image-processing needs justify it.
 
 ## Non-negotiable behavior
 
-Japanese remains horizontal. Preserve the original bubble outline and artwork.
+Replacement lettering remains horizontal, with script-appropriate shaping and direction. Japanese is the default target. Preserve the original bubble outline and artwork.
 Erase lettering through a precise mask, repair the underlying background, and fit
 the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.3.1)
+## Current scope (0.3.2)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -139,3 +139,26 @@ Later quality measurements must report automation coverage and accepted-result
 error rates separately. An algorithm that rejects every difficult bubble is not
 equivalent to a broadly capable translation engine. No performance or OCR accuracy
 claim should be based only on the three known sample panels.
+
+
+## Multilingual lettering in 0.3.2
+
+Target language is stored per edit and saved sentence. A preference supplies the
+default for new edits; it does not alter old content. Missing legacy language and
+font fields resolve to Japanese and regular sans serif, preserving old storage.
+Legacy internal names such as "japanese" remain for compatibility but accept general
+Unicode translation text. Font family, bold, italic, source-height estimate, and
+size-matching mode persist alongside the edit.
+
+ICU line/grapheme boundaries use the edit locale. Native StaticLayout handles
+bidirectional runs and complex shaping; individual lines are centered in permitted
+shape spans. No ellipsis or max-lines truncation is used to force a fit. Combining
+marks and format controls are not rejected just because they are not stand-alone
+glyphs. Missing base glyphs produce an explicit error. The source-size estimator
+measures connected lettering components; it estimates visible height, not the exact
+source font. Four system font families provide manual control. Script fallback may
+make some families look similar on a particular device.
+
+The browser address entry is collapsed into a top-right action, retains typed text
+during open/close, focuses only on explicit expansion, and closes on successful
+navigation or Back. The chapter remains visible while the address field is hidden.

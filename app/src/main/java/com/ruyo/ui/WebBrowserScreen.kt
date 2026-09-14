@@ -16,6 +16,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
@@ -42,17 +44,23 @@ internal fun WebBrowserScreen(model: RuyoModel) {
     var canGoBack by remember { mutableStateOf(false) }
     var clearData by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
+    val addressFocus = remember { FocusRequester() }
+    LaunchedEffect(model.webAddressExpanded) {
+        if (model.webAddressExpanded) { addressFocus.requestFocus(); keyboard?.show() }
+        else keyboard?.hide()
+    }
     fun navigate() {
         runCatching { WebAddress.normalize(address) }.onSuccess { url ->
             failure = null; address = url; model.webUrl = url
-            keyboard?.hide()
+            keyboard?.hide(); model.webAddressExpanded = false
             if (dead) { dead = false; generation++ } else web?.loadUrl(url)
         }.onFailure { failure = it.message ?: "Enter a valid website address." }
     }
     BackHandler(canGoBack && !model.busy) { web?.goBack() }
+    BackHandler(model.webAddressExpanded && !model.busy) { model.webAddressExpanded = false }
     Column(Modifier.fillMaxSize().imePadding().testTag("web-browser")) {
         // Keep native web content clipped below an opaque, independently drawn toolbar.
-        Surface(Modifier.fillMaxWidth().zIndex(1f), color = MaterialTheme.colorScheme.surface) {
+        if (model.webAddressExpanded) Surface(Modifier.fillMaxWidth().zIndex(1f), color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(address, { address = it }, singleLine = true,
                     placeholder = { Text("Paste a chapter link") }, label = { Text("Website address") },
@@ -67,7 +75,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                         unfocusedBorderColor = MaterialTheme.colorScheme.outline,
                     ),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { navigate() }),
-                    enabled = !model.busy, modifier = Modifier.weight(1f).heightIn(min = 60.dp).testTag("web-address"))
+                    enabled = !model.busy, modifier = Modifier.weight(1f).heightIn(min = 60.dp).focusRequester(addressFocus).testTag("web-address"))
                 TextButton(onClick = ::navigate, enabled = !model.busy, modifier = Modifier.testTag("web-go")) { Text("Go") }
             }
         }
@@ -139,7 +147,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 })
             }
             if (model.webUrl.isBlank()) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                EmptyState(AppIcons.Web, "Read from a website", "Paste a chapter link above. Browse inside Ruyo, then choose Find images to import pages you have permission to save.")
+                EmptyState(AppIcons.Web, "Read from a website", "Tap the address icon at the top right to open a chapter. Browse here, or use Find images to save pages for offline reading.")
             }
         }
         Surface(Modifier.zIndex(1f), color = MaterialTheme.colorScheme.surface) {

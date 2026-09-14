@@ -16,7 +16,7 @@ android {
         targetSdk = 36
         versionCode = providers.environmentVariable("GITHUB_RUN_NUMBER")
             .orNull?.toIntOrNull() ?: 1
-        versionName = "0.3.1"
+        versionName = "0.3.2"
     }
 
     buildTypes {
@@ -37,6 +37,7 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
+            it.testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
             it.maxHeapSize = "2g"
             it.systemProperty("roborazzi.test.record", "true")
             it.systemProperty("ruyo.previewDir", layout.buildDirectory.dir("test-previews").get().asFile.path)

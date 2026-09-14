@@ -95,7 +95,7 @@ private fun AppContent(model: RuyoModel) {
                         "book" -> model.chapter?.title.orEmpty()
                         "pages" -> "Chapter pages"
                         "import" -> "Add chapter"
-                        "web" -> "Browse"
+                        "web" -> runCatching { java.net.URI(model.webUrl).host }.getOrNull() ?: "Browse"
                         "editor" -> "Edit bubble"
                         else -> when (model.tab) { "saved" -> "Saved"; "settings" -> "Settings"; else -> "Library" }
                     },
@@ -105,6 +105,11 @@ private fun AppContent(model: RuyoModel) {
                             home && model.tab == "library" -> {
                                 IconButton(onClick = model::browse, enabled = !model.busy) { Icon(AppIcons.Web, "Browse websites") }
                                 IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add comic") }
+                            }
+                            model.route == "web" -> {
+                                IconButton(onClick = { model.webAddressExpanded = !model.webAddressExpanded }, enabled = !model.busy, modifier = Modifier.testTag("toggle-web-address")) {
+                                    Icon(if (model.webAddressExpanded) AppIcons.Close else AppIcons.Search, if (model.webAddressExpanded) "Close address bar" else "Enter website address")
+                                }
                             }
                             model.route == "book" -> {
                                 IconButton(onClick = model::toggleSelection, enabled = !model.busy) { Icon(if (model.selecting) AppIcons.Close else AppIcons.Edit, if (model.selecting) "Cancel selection" else "Edit bubbles") }
@@ -259,7 +264,7 @@ private fun BookCover(bitmap: Bitmap?, title: String, subtitle: String, tag: Str
 @Composable
 private fun SavedScreen(model: RuyoModel) {
     if (model.saved.isEmpty()) {
-        EmptyState(AppIcons.Bookmark, "No saved sentences", "Tap a Japanese bubble while reading, then save the sentence to revisit it here.") {
+        EmptyState(AppIcons.Bookmark, "No saved sentences", "Tap a translated bubble while reading, then save the sentence to revisit it here.") {
             OutlinedButton(onClick = model::openSample, enabled = model.ready) { Text("Read sample") }
         }
     } else LazyColumn(Modifier.fillMaxSize().testTag("saved-screen"), contentPadding = PaddingValues(vertical = 12.dp)) {
@@ -292,6 +297,11 @@ private fun SettingsScreen(model: RuyoModel) {
             }
         }
         item {
+            SectionLabel("Translation")
+            LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy, tag = "default-language")
+            Text("New edits use this language. Existing translations keep theirs.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
             SectionLabel("On this device")
             SettingLine("Imported chapters", model.books.size.toString())
             SettingLine("Pages", model.books.sumOf { it.pages.size }.toString())
@@ -300,8 +310,8 @@ private fun SettingsScreen(model: RuyoModel) {
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.3.1 preview")
-            Text("Read comics. Study Japanese.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SettingLine("Ruyo", "0.3.2 preview")
+            Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("This build includes multi-image chapters, website image import, manual bubble editing, and sample lessons. AI translation and OCR are next.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

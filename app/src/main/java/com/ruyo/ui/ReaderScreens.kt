@@ -72,7 +72,7 @@ internal fun BookReader(model: RuyoModel) {
     }
     DisposableEffect(book.id) { onDispose { model.flushPosition() } }
     Column(Modifier.fillMaxSize().testTag("book-reader")) {
-        ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}")
+        ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}", translatedLabel = "Translated")
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("Tap inside a plain, light bubble. Pinch to reach small dialogue.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -104,7 +104,7 @@ internal fun BookReader(model: RuyoModel) {
             }
         }
         Surface(color = MaterialTheme.colorScheme.surface) {
-            Text(if (model.selecting) "Plain bubbles · Tap inside an existing edit to revise it" else "Pencil to edit · Tap Japanese to save · Pinch to zoom",
+            Text(if (model.selecting) "Plain bubbles · Tap inside an existing edit to revise it" else "Pencil to edit · Tap a translation to save · Pinch to zoom",
                 Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).navigationBarsPadding(),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -112,11 +112,11 @@ internal fun BookReader(model: RuyoModel) {
 }
 
 @Composable
-private fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, detail: String) {
+private fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, detail: String, translatedLabel: String = "Japanese") {
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { onLanguage(false) }, modifier = Modifier.testTag("show-original"), colors = ButtonDefaults.textButtonColors(contentColor = if (!japanese) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)) { Text("Original", fontWeight = if (!japanese) FontWeight.SemiBold else FontWeight.Normal) }
-            TextButton(onClick = { onLanguage(true) }, modifier = Modifier.testTag("show-japanese"), colors = ButtonDefaults.textButtonColors(contentColor = if (japanese) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)) { Text("Japanese", fontWeight = if (japanese) FontWeight.SemiBold else FontWeight.Normal) }
+            TextButton(onClick = { onLanguage(true) }, modifier = Modifier.testTag("show-japanese"), colors = ButtonDefaults.textButtonColors(contentColor = if (japanese) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)) { Text(translatedLabel, fontWeight = if (japanese) FontWeight.SemiBold else FontWeight.Normal) }
             Spacer(Modifier.weight(1f))
             Text(detail, Modifier.padding(end = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -183,7 +183,7 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                     }
                 }
             } else Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SectionLabel("Manual Japanese")
+                SectionLabel("Manual translation · " + com.ruyo.reader.TextLanguages.label(line.languageTag))
                 Text("This is the text you entered for this bubble. You can save it now; AI grammar and vocabulary explanations are coming in a later build.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)

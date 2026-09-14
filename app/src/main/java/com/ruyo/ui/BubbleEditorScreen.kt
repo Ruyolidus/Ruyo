@@ -37,7 +37,7 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
     var showingPreview by remember(draft.edit.id) { mutableStateOf(false) }
     var padding by remember(draft.edit.id, draft.edit.margin) { mutableFloatStateOf(draft.edit.margin.toFloat()) }
     var fontScale by remember(draft.edit.id, draft.edit.fontScale) { mutableFloatStateOf(draft.edit.fontScale) }
-    val preferredSize = BubbleEditRenderer.preferredSize(model.opened?.original?.width ?: draft.crop.width, draft.edit.fontScale)
+    val preferredSize = BubbleEditRenderer.preferredSize(model.opened?.original?.width ?: draft.crop.width, draft.edit)
     val fittedPercent = ((draft.preview?.fit?.fontSize ?: preferredSize) / preferredSize * 100).roundToInt()
     val keyboard = LocalSoftwareKeyboardController.current
     val scroll = rememberLazyListState()
@@ -49,7 +49,7 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
         item {
             Column {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (showingPreview) "Japanese preview" else "Clean the original lettering", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                    Text(if (showingPreview) "Translation preview" else "Clean the original lettering", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     if (draft.preview != null) TextButton(onClick = { showingPreview = !showingPreview }) { Text(if (showingPreview) "Show mask" else "Preview") }
                     else IconButton(onClick = model::resetMask, enabled = !model.busy) { Icon(AppIcons.Undo, "Reset cleanup mask", Modifier.size(20.dp)) }
                 }
@@ -66,15 +66,16 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                     Text("Red pixels will be removed. Brush only over letters; use Restore to protect artwork.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else Row(Modifier.padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Icon(AppIcons.Check, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                    Text(if (fittedPercent < 99) "Auto-shrunk to $fittedPercent% · Pinch to zoom" else "Whole text fits · Normal lettering size", modifier = Modifier.testTag("preview-visible"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(if (fittedPercent < 99) "Auto-shrunk to $fittedPercent% · Pinch to zoom" else if (draft.edit.matchSourceSize) "Whole text fits · Estimated source size" else "Whole text fits · Normal lettering size", modifier = Modifier.testTag("preview-visible"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 OutlinedTextField(value = draft.edit.japanese, onValueChange = model::changeText, enabled = !model.busy,
-                    label = { Text("Japanese text") }, placeholder = { Text("Enter or paste the Japanese dialogue") }, minLines = 2, maxLines = 4,
+                    label = { Text("Translation text") }, placeholder = { Text("Enter or paste the translated dialogue") }, minLines = 2, maxLines = 4,
                     supportingText = { Text("${draft.edit.japanese.length} / 512 · Entered manually in this build") }, modifier = Modifier.fillMaxWidth().testTag("japanese-input"))
+                LetteringControls(draft.edit, model)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Text size", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = fontScale, onValueChange = { fontScale = it },

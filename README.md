@@ -1,14 +1,19 @@
 # Ruyo
 
-An Android reader for learning Japanese through comic dialogue. Built with **Kotlin
+An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.3.1
+## Preview 0.3.2
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
 separate app from the original `com.ruyolidus.ruyo.debug` preview.
 
+- A compact browser address icon at the top right. Tap to expand and focus the field; successful navigation collapses it again.
+- A persistent default target language and per-edit language choices, including custom language codes. Existing Japanese edits retain their language.
+- Sans serif, serif, condensed, and monospace lettering with bold/italic controls and device script fallback. Exact source-font recognition and custom font-file import are not implemented.
+- Optional original-letter-height estimation for new edits. It sets the preferred size; the fitter can still shrink the complete translation to stay inside the selected region.
+- Native bidirectional text layout and locale-aware line boundaries for multilingual manual replacements. Language selection is not a claim that every device font or future AI provider supports every script.
 - Multi-image chapters: choose up to 200 comic chunks at once, review thumbnails,
   sort numeric filenames (1, 2, 10), move pages up/down, then save one chapter.
 - Rename chapters, reorder/remove pages, and append more images. Existing single-image
@@ -23,13 +28,13 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 - A full-width comic reader with pinch zoom and original/Japanese switching.
 - A restrained light/dark interface with Library, Saved, and Settings navigation.
 - Tap an enclosed, light, flat bubble to select it; review and brush-correct its
-  lettering mask, enter Japanese, adjust padding, preview, and save the replacement.
+  lettering mask, enter a translation, adjust its style and padding, preview, and save the replacement.
 - Small bubbles can be selected, including a tap that lands on lettering when a nearby blank seed belongs to the same interior. Rejections remain visible while selecting.
 - The selector rejects page backgrounds, unsuitable seeds, uneven backgrounds,
   oversized selections, and regions likely to contain artwork.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
   edited bubble to revise it or restore its original state.
-- Japanese starts at normal dialogue size and automatically reflows/shrinks as needed.
+- Lettering starts at normal dialogue size or an estimated source size and automatically reflows/shrinks as needed.
   Text size and padding are separate controls; releasing either slider recalculates
   the preview. Short dialogue is no longer enlarged to fill an empty bubble.
 - Every successful replacement preview scrolls into view. Fit failures stay visible

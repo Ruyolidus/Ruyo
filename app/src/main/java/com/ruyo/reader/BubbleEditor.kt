@@ -27,6 +27,12 @@ data class BubbleEdit(
     val japanese: String,
     val margin: Int,
     val fontScale: Float = 1f,
+    val languageTag: String = "ja",
+    val fontFamily: String = "sans-serif",
+    val bold: Boolean = false,
+    val italic: Boolean = false,
+    val sourceLetterHeight: Float? = null,
+    val matchSourceSize: Boolean = false,
 )
 
 sealed interface SelectionResult {
@@ -156,14 +162,23 @@ object BubbleEditRenderer {
     // independent of the amount of empty space in a large speech bubble.
     fun preferredSize(pageWidth: Int, scale: Float = 1f): Float = (pageWidth / 24f).coerceIn(14f, 60f) * scale
 
+    fun preferredSize(pageWidth: Int, edit: BubbleEdit): Float {
+        val height = edit.sourceLetterHeight
+        val font = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic)
+        return if (edit.matchSourceSize && height != null && height.isFinite() && height > 0f)
+            SourceLettering.preferredSize(height, edit.languageTag, font) * edit.fontScale
+        else preferredSize(pageWidth, edit.fontScale)
+    }
+
     fun preview(source: Bitmap, edit: BubbleEdit): Result<BubblePreview> = runCatching {
         val region = edit.region
         require(region.left >= 0 && region.top >= 0 && region.left + region.width <= source.width && region.top + region.height <= source.height) { "The bubble is outside the image." }
         val safe = region.interior.inset(edit.margin.coerceAtLeast(2))
         require(edit.fontScale.isFinite() && edit.fontScale in 0.6f..1.6f) { "Choose a text size between 60% and 160%." }
-        val preferred = preferredSize(source.width, edit.fontScale)
+        val preferred = preferredSize(source.width, edit)
         val minimum = min(preferred, 6f)
-        val result = BubbleFitter().fit(edit.japanese, safe, preferred, minimum)
+        val result = BubbleFitter().fit(edit.japanese, safe, preferred, minimum,
+            languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic))
         require(result is FitResult.Accepted) { (result as FitResult.Rejected).reason }
         val pixels = IntArray(region.width * region.height)
         source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)

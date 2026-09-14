@@ -53,6 +53,8 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     var selectionError by mutableStateOf<String?>(null); private set
     var japanese by mutableStateOf(true)
     var webUrl by mutableStateOf("")
+    var webAddressExpanded by mutableStateOf(false)
+    var targetLanguage by mutableStateOf(runCatching { TextLanguages.normalize(prefs.getString("targetLanguage", "ja") ?: "ja") }.getOrDefault("ja")); private set
 
     init { refresh() }
     fun refresh() = task {
@@ -67,6 +69,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
     }
+    fun changeTargetLanguage(value: String) { targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
     fun openSample() { route = "sample"; japanese = true }
     fun browse() { route = "web" }
     fun managePages() { selecting = false; route = "pages" }
@@ -198,7 +201,9 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
             is SelectionResult.Selected -> result.region
             is SelectionResult.Rejected -> { selectionError = result.reason; return@task }
         }
-        val edit = existing ?: BubbleEdit(region = region, japanese = "", margin = maxOf(2, minOf(region.width, region.height) / 14))
+        val sourceHeight = if (existing == null) withContext(Dispatchers.Default) { SourceLettering.estimateHeight(region) } else existing.sourceLetterHeight
+        val edit = existing ?: BubbleEdit(region = region, japanese = "", margin = maxOf(2, minOf(region.width, region.height) / 14),
+            languageTag = targetLanguage, sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
         val crop = Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height)
         opened = book
         draft = EditorDraft(edit, crop, region.eraseMask.copyOf(), existing != null)
@@ -206,6 +211,16 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     }
     fun toggleSelection() { selectionError = null; selecting = !selecting }
     fun changeText(value: String) { draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
+    fun changeEditLanguage(value: String) { updateLettering { it.copy(languageTag = TextLanguages.normalize(value)) } }
+    fun changeFont(value: String) { updateLettering { it.copy(fontFamily = LetteringFont.fromId(value).family) } }
+    fun changeBold(value: Boolean) { updateLettering { it.copy(bold = value) } }
+    fun changeItalic(value: Boolean) { updateLettering { it.copy(italic = value) } }
+    fun changeMatchSource(value: Boolean) { updateLettering { it.copy(matchSourceSize = value && it.sourceLetterHeight != null) } }
+    private fun updateLettering(change: (BubbleEdit) -> BubbleEdit) {
+        if (busy) return
+        draft = draft?.let { it.copy(edit = change(it.edit), preview = null, previewError = null, revision = it.revision + 1) }
+        if (draft?.edit?.japanese?.isNotBlank() == true) preview()
+    }
     fun changeFontScale(value: Float) { draft = draft?.let { it.copy(edit = it.edit.copy(fontScale = value.coerceIn(0.6f, 1.6f)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeMargin(value: Int) { draft = draft?.let { it.copy(edit = it.edit.copy(margin = value), preview = null, previewError = null, revision = it.revision + 1) } }
     fun resetMask() { draft = draft?.let { it.copy(edit = it.edit.copy(region = it.edit.region.copy(eraseMask = it.initialMask.copyOf())), preview = null, previewError = null, revision = it.revision + 1) } }
@@ -262,7 +277,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         lesson = SavedLine("sample:$id", line.japanese, "Before the rain", id)
     }
     fun studyEdit(edit: BubbleEdit, page: OpenBook? = opened) {
-        lesson = SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter")
+        lesson = SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter", languageTag = edit.languageTag)
     }
     fun toggleSaved(line: SavedLine) = task { saved = withContext(Dispatchers.IO) { store.toggleSaved(line) } }
     private fun task(block: suspend () -> Unit) {

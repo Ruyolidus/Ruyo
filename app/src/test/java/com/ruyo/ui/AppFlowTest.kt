@@ -172,6 +172,10 @@ class AppFlowTest {
         awaitTag("book-sample")
         compose.onNodeWithContentDescription("Browse websites").performClick()
         awaitTag("web-browser")
+        compose.onNodeWithTag("web-address").assertDoesNotExist()
+        capture("web-browser-collapsed")
+        compose.onNodeWithTag("toggle-web-address").performClick()
+        awaitTag("web-address")
         compose.onNodeWithText("Paste a chapter link").assertIsDisplayed()
         compose.onNodeWithText("Website address").assertIsDisplayed()
         capture("web-browser")
@@ -183,6 +187,10 @@ class AppFlowTest {
         capture("web-address-entered-dark")
         compose.onNodeWithTag("web-go").performClick()
         compose.onNodeWithText("Use an HTTPS website address without a username or custom port.").assertIsDisplayed()
+        compose.onNodeWithTag("toggle-web-address").performClick()
+        compose.onNodeWithTag("web-address").assertDoesNotExist()
+        compose.onNodeWithTag("toggle-web-address").performClick()
+        compose.onNodeWithTag("web-address").assertTextContains("file:///private/image.png")
     }
 
     @Test fun discoveredWebImagesCanBeSelectedBeforeDownload() {
@@ -202,6 +210,41 @@ class AppFlowTest {
         compose.onNodeWithTag("show-other-web-images").performClick()
         compose.onNodeWithText("Comment image").assertIsDisplayed()
         compose.onNodeWithText("Download 2 images").assertIsDisplayed()
+    }
+
+
+    @Test fun defaultLanguageAndFontControlsCreateAPersistedFrenchEdit() {
+        val source = SampleChapter.build().first().original
+        val book = LocalBookStore(context).addBitmap("Font test", source)
+        val model = RuyoModel(context)
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        compose.onNodeWithTag("nav-settings").performClick()
+        compose.onNodeWithTag("default-language").performScrollTo().performClick()
+        compose.onNodeWithTag("language-fr").performClick()
+        assertEquals("fr", model.targetLanguage)
+        compose.onNodeWithTag("nav-library").performClick()
+        compose.onNodeWithTag("book-" + book.id).performClick()
+        awaitTag("imported-page")
+        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * 0.5f, height * 0.105f)) }
+        awaitTag("japanese-input")
+        assertEquals("fr", model.draft!!.edit.languageTag)
+        compose.onNodeWithTag("japanese-input").performTextInput("Allons-y !")
+        compose.onNodeWithTag("lettering-font").performScrollTo().performClick()
+        compose.onNodeWithTag("font-serif").performClick()
+        awaitState { model.draft?.preview != null && !model.busy }
+        compose.onNodeWithTag("font-bold").performScrollTo().performClick()
+        awaitState { model.draft?.edit?.bold == true && model.draft?.preview != null && !model.busy }
+        capture("french-font-preview")
+        compose.onNodeWithTag("save-edit").performClick()
+        awaitTag("book-reader")
+        awaitState { !model.busy }
+        val saved = LocalBookStore(context).open(book).edits.single()
+        assertEquals("fr", saved.languageTag)
+        assertEquals("serif", saved.fontFamily)
+        assertTrue(saved.bold)
+        assertEquals("fr", context.getSharedPreferences("settings", 0).getString("targetLanguage", null))
     }
 
     private fun awaitTag(tag: String) { compose.waitUntil(20_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }; compose.waitForIdle() }
