@@ -99,13 +99,15 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.IO) {
                 val context = currentCoroutineContext()
                 var bytes = before.sumOf { page -> page.folder.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
-                inputs.forEachIndexed { index, input ->
+                for ((index, input) in inputs.withIndex()) {
                     context.ensureActive()
                     try {
                         val page = load(input) { context.ensureActive() }
                         val size = page.folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
                         if (bytes + size > 512L * 1024 * 1024) {
-                            store.discard(listOf(page)); error("This import exceeds 512 MB. Add the remaining pages in a separate batch.")
+                            store.discard(listOf(page))
+                            for (remaining in index until inputs.size) failures += "Image ${remaining + 1}: The 512 MB batch limit was reached. Add this image in another batch."
+                            break
                         }
                         created += page; bytes += size
                     } catch (error: CancellationException) { throw error }

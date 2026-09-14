@@ -6,6 +6,8 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.provider.OpenableColumns
 import java.io.File
+import java.io.FileInputStream
+import java.nio.channels.FileChannel
 import kotlin.math.max
 import kotlin.math.sqrt
 
@@ -19,7 +21,13 @@ object ImageImporter {
     }.getOrNull() ?: uri.lastPathSegment ?: "Imported image"
 
     fun load(context: Context, uri: Uri): ImportedImage = decode(ImageDecoder.createSource(context.contentResolver, uri), name(context, uri))
-    fun load(file: File, name: String): ImportedImage = decode(ImageDecoder.createSource(file), name)
+    fun load(file: File, name: String): ImportedImage = FileInputStream(file).channel.use { channel ->
+        val bytes = channel.size()
+        require(bytes in 1..(40L * 1024 * 1024)) { "This image is empty or exceeds the 40 MB import limit." }
+        // Avoid an extra encoded-image heap copy, and exercise the same native decoder in JVM CI.
+        val buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, bytes)
+        decode(ImageDecoder.createSource(buffer), name)
+    }
 
     private fun decode(source: ImageDecoder.Source, name: String): ImportedImage {
         var reduced = false

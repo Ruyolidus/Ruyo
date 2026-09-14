@@ -142,7 +142,7 @@ class LocalBookStore(context: Context) {
     }
 
     @Synchronized fun thumbnail(id: String): Bitmap? {
-        val book = readBook(id)
+        val book = runCatching { readBook(id) }.getOrNull() ?: return null
         return pageThumbnail(book, book.pages.first())
     }
     fun pageThumbnail(book: LocalBook, page: LocalPage): Bitmap? = BitmapFactory.decodeFile(File(pageFolder(book, page), "cover.png").path)

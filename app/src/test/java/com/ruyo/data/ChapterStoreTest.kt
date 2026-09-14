@@ -91,7 +91,7 @@ class ChapterStoreTest {
         assertEquals(2, store.commitChapter("Updated", listOf(good), book.id).pages.size)
     }
 
-    @Test fun realPngBytesCanBeStagedAndOriginalBytesArePreserved() {
+    @Test @Config(sdk = [31, 35]) fun realPngBytesCanBeStagedAndOriginalBytesArePreserved() {
         val store = LocalBookStore(context)
         val source = bitmap(Color.GREEN)
         val bytes = java.io.ByteArrayOutputStream().apply { source.compress(Bitmap.CompressFormat.PNG, 100, this) }.toByteArray()
