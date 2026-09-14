@@ -172,8 +172,15 @@ class AppFlowTest {
         awaitTag("book-sample")
         compose.onNodeWithContentDescription("Browse websites").performClick()
         awaitTag("web-browser")
+        compose.onNodeWithText("Paste a chapter link").assertIsDisplayed()
+        compose.onNodeWithText("Website address").assertIsDisplayed()
         capture("web-browser")
+        compose.runOnIdle { model.changeTheme("dark") }
+        compose.onNodeWithText("Paste a chapter link").assertIsDisplayed()
+        capture("web-browser-dark")
         compose.onNodeWithTag("web-address").performTextInput("file:///private/image.png")
+        compose.onNodeWithTag("web-address").assertTextContains("file:///private/image.png")
+        capture("web-address-entered-dark")
         compose.onNodeWithTag("web-go").performClick()
         compose.onNodeWithText("Use an HTTPS website address without a username or custom port.").assertIsDisplayed()
     }
@@ -183,13 +190,18 @@ class AppFlowTest {
             WebImage("https://example.com/1.png", "1.png", 900, 1500),
             WebImage("https://example.com/2.png", "2.png", 900, 1500),
             WebImage("https://example.com/banner.png", "banner.png", 900, 140),
+            WebImage("https://example.com/reaction.png", "reaction.png", 1000, 1400, "Comment image"),
         ))
         var selected: Set<String>? = null
         compose.setContent { RuyoTheme("light") { WebImagesSheet(source, {}) { selected = it } } }
         awaitTag("web-images-review")
         capture("web-images-review", "web-images-review")
+        compose.onNodeWithText("Comment image").assertDoesNotExist()
         compose.onNodeWithText("Download 2 images").performClick()
         assertEquals(setOf(source.images[0].url, source.images[1].url), selected)
+        compose.onNodeWithTag("show-other-web-images").performClick()
+        compose.onNodeWithText("Comment image").assertIsDisplayed()
+        compose.onNodeWithText("Download 2 images").assertIsDisplayed()
     }
 
     private fun awaitTag(tag: String) { compose.waitUntil(20_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }; compose.waitForIdle() }

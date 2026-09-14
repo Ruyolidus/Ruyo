@@ -74,8 +74,10 @@ internal fun BookReader(model: RuyoModel) {
     Column(Modifier.fillMaxSize().testTag("book-reader")) {
         ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}")
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
-            Text("Tap the empty background inside a light bubble. Scroll or pinch to reach it.", Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+            Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+                Text("Tap inside a plain, light bubble. Pinch to reach small dialogue.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                model.selectionError?.let { Text(it, Modifier.padding(top = 8.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer) }
+            }
         }
         LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("chapter-scroll"), state = scroll) {
             itemsIndexed(book.pages, key = { _, page -> page.id }) { index, page ->

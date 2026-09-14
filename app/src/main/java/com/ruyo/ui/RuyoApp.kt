@@ -107,7 +107,7 @@ private fun AppContent(model: RuyoModel) {
                                 IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add comic") }
                             }
                             model.route == "book" -> {
-                                IconButton(onClick = { model.selecting = !model.selecting }, enabled = !model.busy) { Icon(if (model.selecting) AppIcons.Close else AppIcons.Edit, if (model.selecting) "Cancel selection" else "Edit bubbles") }
+                                IconButton(onClick = model::toggleSelection, enabled = !model.busy) { Icon(if (model.selecting) AppIcons.Close else AppIcons.Edit, if (model.selecting) "Cancel selection" else "Edit bubbles") }
                                 IconButton(onClick = model::managePages, enabled = !model.busy) { Icon(AppIcons.Pages, "Manage chapter pages") }
                                 IconButton(onClick = { remove = model.chapter }, enabled = !model.busy) { Icon(AppIcons.Trash, "Remove chapter") }
                             }
@@ -300,7 +300,7 @@ private fun SettingsScreen(model: RuyoModel) {
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.3.0 preview")
+            SettingLine("Ruyo", "0.3.1 preview")
             Text("Read comics. Study Japanese.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("This build includes multi-image chapters, website image import, manual bubble editing, and sample lessons. AI translation and OCR are next.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

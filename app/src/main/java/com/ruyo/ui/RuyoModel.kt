@@ -50,6 +50,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     var ready by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null)
     var selecting by mutableStateOf(false)
+    var selectionError by mutableStateOf<String?>(null); private set
     var japanese by mutableStateOf(true)
     var webUrl by mutableStateOf("")
 
@@ -191,17 +192,19 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     }
     fun selectBubble(x: Int, y: Int, page: OpenBook? = opened) = task {
         val book = page ?: return@task
+        selectionError = null
         val existing = book.edits.findLast { it.region.contains(x, y) }
         val region = if (existing != null) existing.region else when (val result = withContext(Dispatchers.Default) { BubbleSelector.select(book.original, x, y) }) {
             is SelectionResult.Selected -> result.region
-            is SelectionResult.Rejected -> { message = result.reason; return@task }
+            is SelectionResult.Rejected -> { selectionError = result.reason; return@task }
         }
-        val edit = existing ?: BubbleEdit(region = region, japanese = "", margin = maxOf(4, minOf(region.width, region.height) / 14))
+        val edit = existing ?: BubbleEdit(region = region, japanese = "", margin = maxOf(2, minOf(region.width, region.height) / 14))
         val crop = Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height)
         opened = book
         draft = EditorDraft(edit, crop, region.eraseMask.copyOf(), existing != null)
         selecting = false; route = "editor"
     }
+    fun toggleSelection() { selectionError = null; selecting = !selecting }
     fun changeText(value: String) { draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeFontScale(value: Float) { draft = draft?.let { it.copy(edit = it.edit.copy(fontScale = value.coerceIn(0.6f, 1.6f)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeMargin(value: Int) { draft = draft?.let { it.copy(edit = it.edit.copy(margin = value), preview = null, previewError = null, revision = it.revision + 1) } }

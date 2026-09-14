@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.3.0)
+## Current scope (0.3.1)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -26,7 +26,7 @@ persist in private files. Unsaved drafts are not promised to survive process dea
 
 `BubbleSelector` uses a user-selected blank pixel to find an enclosed, light,
 nearly uniform background. It fills lettering holes, estimates a background color,
-and proposes an erasure mask. This is a limited heuristic, with size, edge,
+and proposes an erasure mask. Small interiors down to 16 × 16 pixels are eligible. A tap on lettering can retry nearby light seeds, but only a region containing the actual tap can be accepted. This is a limited heuristic, with size, edge,
 flatness, and foreground-density gates; it does not claim to understand artwork.
 The editor displays its mask and allows correction with erase/restore brushes.
 Every replacement passes the complete-text raster containment gate before saving.
@@ -44,7 +44,7 @@ never publishes a partial list. Page removal updates metadata before deleting fi
 The multi-document picker copies files during the current activity session; no
 broad storage permission is needed. The review screen supports title, numeric
 filename sorting, individual moves/removal, and append. Original bytes are archived
-separately from the bounded working PNG. Each file has a 40 MB limit and each batch
+separately from the bounded working PNG (6 MP / 8192 pixels per dimension for new imports). Existing working copies and edit coordinates are not silently resized. Each file has a 40 MB limit and each batch
 a 512 MB storage budget. A chapter has up to 200 pages. Imports report individual
 failures before saving and support cancellation. Unsaved imports are temporary;
 process death does not commit them. Old orphaned cache folders may be removed by Android.
@@ -78,7 +78,7 @@ cleared without deleting imported chapters.
 
 A native button runs a fixed read-only DOM collector through `evaluateJavascript`.
 It collects visible `img` elements, common lazy-image attributes and `currentSrc`,
-filters tiny decorations, deduplicates URLs, and preserves document order. URLs
+prefers the largest declared responsive source when there is no explicit lazy source, filters tiny decorations, deduplicates URLs, and preserves chapter document order. Recognized comment/profile images and images outside known reader containers are excluded from default selection but remain available under Show other website images. Heuristics can miss unknown site structures. URLs
 are revalidated in Kotlin and a navigation race invalidates the result. Users choose
 images, download them, and review thumbnails/order before saving a chapter.
 
@@ -99,6 +99,8 @@ Full-resolution long webtoons still need region decoding and a bounded tile cach
 Do not run future OCR against a downscaled working copy and assume tiny dialogue is
 preserved. The editor currently supports light, flat bubbles and manually entered
 translations; source pixels stay intact for reprocessing or restoring a bubble.
+
+See [the browser translation plan](browser-translation.md) for the on-page reading session, original-resolution pipeline, and colored-panel repair work.
 
 ## Next stages
 

@@ -37,15 +37,36 @@ sealed interface SelectionResult {
 /** A deliberately limited, user-seeded selector for enclosed, light, flat bubbles. */
 object BubbleSelector {
     fun select(source: Bitmap, x: Int, y: Int): SelectionResult {
-        fun reject(message: String) = SelectionResult.Rejected(message)
         val w = source.width
         val h = source.height
-        if (x !in 0 until w || y !in 0 until h) return reject("Tap inside the image.")
+        if (x !in 0 until w || y !in 0 until h) return SelectionResult.Rejected("Tap inside the image.")
         val pixels = IntArray(w * h)
         source.getPixels(pixels, 0, w, 0, 0, w, h)
+        val direct = selectAt(pixels, w, h, x, y)
+        if (direct is SelectionResult.Selected || isLight(pixels[y * w + x])) return direct
+        // A fingertip often lands on a letter in a small bubble. Try nearby blank
+        // pixels, but accept only an interior that contains the original tap.
+        var attempts = 0
+        for (radius in listOf(2, 4, 7, 10, 14)) for ((dx, dy) in listOf(
+            0 to -radius, -radius to 0, radius to 0, 0 to radius,
+            -radius to -radius, radius to -radius, -radius to radius, radius to radius,
+        )) {
+            val xx = x + dx; val yy = y + dy
+            if (xx !in 0 until w || yy !in 0 until h || !isLight(pixels[yy * w + xx])) continue
+            if (attempts++ >= 8) return direct
+            val nearby = selectAt(pixels, w, h, xx, yy)
+            if (nearby is SelectionResult.Selected && nearby.region.contains(x, y)) return nearby
+        }
+        return direct
+    }
+
+    private fun isLight(color: Int) = Color.alpha(color) >= 250 && minOf(Color.red(color), Color.green(color), Color.blue(color)) >= 175
+
+    private fun selectAt(pixels: IntArray, w: Int, h: Int, x: Int, y: Int): SelectionResult {
+        fun reject(message: String) = SelectionResult.Rejected(message)
         val seed = pixels[y * w + x]
-        if (Color.alpha(seed) < 250 || minOf(Color.red(seed), Color.green(seed), Color.blue(seed)) < 175) {
-            return reject("Tap the empty, light background inside a bubble, away from its letters.")
+        if (!isLight(seed)) {
+            return reject("Tap a plain, light bubble. Colored panels and text over artwork need a different cleanup method, which is not available yet.")
         }
         val cap = min(pixels.size, 900_000)
         val queue = IntArray(cap)
@@ -75,7 +96,8 @@ object BubbleSelector {
         }
         if (edge) return reject("This area reaches the image edge. Choose a bubble with a complete outline.")
         val cw = right - left + 1; val ch = bottom - top + 1
-        if (cw < 40 || ch < 32 || tail < 600 || cw.toLong() * ch > 900_000) return reject("This selection is too small or irregular. Tap a different empty part of the bubble.")
+        if (cw < 16 || ch < 16 || tail < 80) return reject("There is too little bubble background at this image resolution. Try an empty area beside the letters, or a higher-quality source image.")
+        if (cw.toLong() * ch > 900_000) return reject("This area is too large. Choose a smaller, enclosed speech bubble.")
 
         // The connected background excludes lettering. Fill enclosed holes to recover the interior.
         val background = BooleanArray(cw * ch) { visited[(top + it / cw) * w + left + it % cw] }

@@ -3,7 +3,7 @@
 An Android reader for learning Japanese through comic dialogue. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.3.0
+## Preview 0.3.1
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
@@ -17,12 +17,14 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   bounded cache of nearby pages. Library search, filters, and thumbnails remain.
 - An in-app HTTPS browser: paste a chapter link, browse and scroll to load lazy
   images, tap **Find images**, select pages, download, review their order, then save.
+- The browser address field has a persistent filled background and visible outline in both themes. Image discovery separates recognized comment/profile images and images outside known reader containers; these are not selected by default. A manual toggle keeps them available if a site is misclassified. Responsive image sets prefer their largest declared source.
 - Import progress, cancellation, and per-image failures. Partial successful imports
   are shown for review; they are never silently saved as complete chapters.
 - A full-width comic reader with pinch zoom and original/Japanese switching.
 - A restrained light/dark interface with Library, Saved, and Settings navigation.
 - Tap an enclosed, light, flat bubble to select it; review and brush-correct its
   lettering mask, enter Japanese, adjust padding, preview, and save the replacement.
+- Small bubbles can be selected, including a tap that lands on lettering when a nearby blank seed belongs to the same interior. Rejections remain visible while selecting.
 - The selector rejects page backgrounds, unsuitable seeds, uneven backgrounds,
   oversized selections, and regions likely to contain artwork.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
@@ -45,9 +47,9 @@ dedicated source adapters. This does not promise support for every scan site.
 Use pages you have permission to save; access restrictions are not bypassed.
 
 New imports retain original image bytes in private storage plus bounded working
-copies (up to 2 megapixels / 8192 pixels per dimension). Large working copies are
+copies (up to 6 megapixels / 8192 pixels per dimension). Large working copies are
 marked in page review. Full-resolution webtoon tiling and OCR against originals
-are future work. The app cannot recover original pixels lost by an earlier 0.2
+are future work. This quality increase applies to new imports; existing working images and their edit coordinates remain unchanged. Reimporting creates a separate higher-quality chapter. The app cannot recover original pixels lost by an earlier 0.2
 import. Each image is limited to 40 MB, each import batch to 512 MB, and each
 chapter to 200 images. Unsaved import/editor drafts do not survive process death.
 
@@ -89,11 +91,11 @@ compatible versions, not floating latest dependencies.
 The renderer maintains an interior mask, an inset safe text region, and a separate
 original-lettering mask. The fitter measures Japanese with Android's text engine,
 selects legal line breaks for each available line band, and decreases font size
-within a readable range. It rasterizes the complete text **without clipping** and
+down to its six-source-pixel minimum (dense text may need zoom). It rasterizes the complete text **without clipping** and
 accepts it only when no nontransparent text pixel lies outside the safe region.
 
 Clipping is a final containment safeguard after the fit passes. Truncation and
-ellipsis cannot make a failed fit pass. If a complete readable fit is impossible,
+ellipsis cannot make a failed fit pass. If a complete fit is impossible,
 the engine returns a rejection. Automatic segmentation and complex inpainting
 will need their own validation; this prototype does not claim those problems are solved.
 
@@ -120,7 +122,7 @@ app's interaction and performance on an actual phone.
 | `data` | Ordered chapters, original files, masks, edits, progress, and saved sentences |
 | `ui` | Library, reader, chapter review, browser, editor, lessons, and themes |
 
-See [the implementation roadmap](docs/architecture.md) for the next stages.
+See [the implementation roadmap](docs/architecture.md) and [the browser translation plan](docs/browser-translation.md) for the next stages.
 
 ## Attribution
 

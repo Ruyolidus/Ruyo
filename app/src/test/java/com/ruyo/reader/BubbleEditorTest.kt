@@ -2,6 +2,8 @@ package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Paint
 import com.ruyo.data.LocalBookStore
 import com.ruyo.sample.SampleChapter
 import org.junit.Assert.*
@@ -50,6 +52,30 @@ class BubbleEditorTest {
     @Test fun rejectsDarkLetteringAsTheBackgroundSeed() {
         val plain = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLACK) }
         assertTrue(BubbleSelector.select(plain, 200, 200) is SelectionResult.Rejected)
+    }
+
+    @Test fun smallBubbleAcceptsALetterTapWithoutSelectingItsNeighbour() {
+        val source = Bitmap.createBitmap(120, 100, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.DKGRAY) }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        Canvas(source).apply {
+            paint.color = Color.BLACK; drawOval(30f, 30f, 62f, 58f, paint)
+            paint.color = Color.WHITE; drawOval(32f, 32f, 60f, 56f, paint)
+            paint.color = Color.BLACK; drawRect(44f, 40f, 48f, 47f, paint)
+        }
+        val selected = BubbleSelector.select(source, 46, 43)
+        assertTrue(selected.toString(), selected is SelectionResult.Selected)
+        val region = (selected as SelectionResult.Selected).region
+        assertTrue(region.width < 40 && region.height < 32)
+        val preview = BubbleEditRenderer.preview(source, BubbleEdit(region = region, japanese = "はい", margin = 2)).getOrThrow()
+        assertEquals(0, region.interior.inset(2).outsideInkCount(preview.fit.ink))
+        assertTrue("A nearby bubble must not capture a tap outside its interior", BubbleSelector.select(source, 64, 44) is SelectionResult.Rejected)
+    }
+
+    @Test fun coloredPanelsRemainExplicitlyUnsupported() {
+        val blue = Bitmap.createBitmap(120, 100, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(60, 190, 240)) }
+        val rejected = BubbleSelector.select(blue, 60, 50)
+        assertTrue(rejected is SelectionResult.Rejected)
+        assertTrue((rejected as SelectionResult.Rejected).reason.contains("Colored panels"))
     }
 
     @Test fun importAndEditsSurviveReopeningAndCanBeUndone() {

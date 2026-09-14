@@ -14,6 +14,10 @@ import kotlin.math.sqrt
 data class ImportedImage(val bitmap: Bitmap, val name: String, val reducedForPreview: Boolean)
 
 object ImageImporter {
+    // A 6 MP source/display pair fits inside ReaderPageLoader's 48 MiB cache.
+    // Very long strips still need region decoding; original bytes stay archived.
+    const val MAX_WORKING_PIXELS = 6_000_000
+    const val MAX_WORKING_DIMENSION = 8192
     fun name(context: Context, uri: Uri): String = runCatching {
         context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
             if (cursor.moveToFirst()) cursor.getString(0) else null
@@ -36,7 +40,7 @@ object ImageImporter {
             require(size.width > 0 && size.height > 0) { "This file is not a readable image." }
             val pixels = size.width.toDouble() * size.height.toDouble()
             // Keep a working copy for editing. Original bytes are archived separately.
-            val scale = max(1.0, max(sqrt(pixels / 2_000_000.0), max(size.width, size.height) / 8192.0))
+            val scale = max(1.0, max(sqrt(pixels / MAX_WORKING_PIXELS), max(size.width, size.height).toDouble() / MAX_WORKING_DIMENSION))
             if (scale > 1.0) {
                 reduced = true
                 decoder.setTargetSize(max(1, (size.width / scale).toInt()), max(1, (size.height / scale).toInt()))

@@ -5,13 +5,16 @@ import vm from 'node:vm';
 const kotlin = readFileSync(new URL('../app/src/main/java/com/ruyo/web/WebImport.kt', import.meta.url), 'utf8');
 const script = kotlin.match(/val script = """([\s\S]*?)"""\.trimIndent\(\)/)?.[1];
 assert.ok(script, 'The production discovery script must exist');
-const img = (src, width, height, attrs = {}, style = {}) => ({
+const img = (src, width, height, attrs = {}, style = {}, ancestors = []) => ({
   src, currentSrc: src, naturalWidth: width, naturalHeight: height,
-  getAttribute: name => attrs[name] ?? null, style,
+  getAttribute: name => attrs[name] ?? null, style, className: attrs.class ?? '',
+  closest: selector => ancestors.some(parent => selector.split(',').map(value => value.trim()).includes(parent)) ? {} : null,
 });
-const discover = images => JSON.parse(vm.runInNewContext(script, {
+const discover = (images, chapterImages = null) => JSON.parse(vm.runInNewContext(script, {
   URL, location: { href: 'https://example.com/chapter/1' },
-  document: { baseURI: 'https://example.com/chapter/1', title: 'Chapter one', images },
+  document: { baseURI: 'https://example.com/chapter/1', title: 'Chapter one', images,
+    querySelectorAll: () => chapterImages ? [{ querySelector: () => chapterImages[0], contains: image => chapterImages.includes(image) }] : [],
+  },
   getComputedStyle: image => image.style,
 }, { timeout: 1000 }));
 
@@ -30,4 +33,21 @@ assert.deepEqual(result.images.map(image => image.url), [
 assert.equal(result.images[1].width, 0, 'A tiny placeholder must not exclude its full-size lazy image');
 assert.equal(result.title, 'Chapter one');
 assert.equal(discover(Array.from({ length: 250 }, (_, index) => img(`https://example.com/${index}.jpg`, 900, 1200))).images.length, 200);
-console.log('Web discovery fixtures passed: DOM order, lazy placeholders, deduplication, hidden/decorative images, URL schemes, and page limit.');
+const pages = [img('https://example.com/page1.jpg', 800, 1200), img('https://example.com/page2.jpg', 800, 1200)];
+const comment = img('https://example.com/reaction.jpg', 1200, 1600, {}, {}, ['.comment-body']);
+const avatar = img('https://example.com/user.jpg', 512, 512, { class: 'profile-avatar large' });
+const unrelated = img('https://example.com/recommendation.jpg', 800, 1200);
+const filtered = discover([comment, pages[0], unrelated, pages[1], avatar], pages);
+assert.deepEqual(filtered.images.filter(image => !image.excludedReason).map(image => image.url), pages.map(page => page.src));
+assert.equal(filtered.images.find(image => image.url === comment.src).excludedReason, 'Comment image');
+assert.equal(filtered.images.find(image => image.url === avatar.src).excludedReason, 'Navigation or profile image');
+assert.equal(filtered.images.find(image => image.url === unrelated.src).excludedReason, 'Outside the chapter area');
+assert.equal(discover([comment]).images[0].excludedReason, 'Comment image', 'Comments are recognized even without a known reader container');
+const crowded = discover([...Array.from({ length: 240 }, (_, i) => img(`https://example.com/comment${i}.jpg`, 900, 1200, {}, {}, ['#comments'])), ...pages]);
+assert.deepEqual(crowded.images.slice(0, 2).map(image => image.url), pages.map(page => page.src));
+const repeated = discover([img(pages[0].src, 800, 1200, {}, {}, ['.comment']), pages[0]]);
+assert.equal(repeated.images.length, 1);
+assert.equal(repeated.images[0].excludedReason, null);
+const responsive = discover([img('https://example.com/small.jpg', 320, 480, { srcset: '/small.jpg 320w, /large.jpg 1600w' })]);
+assert.equal(responsive.images[0].url, 'https://example.com/large.jpg');
+console.log('Web discovery fixtures passed: ordering, lazy/responsive originals, comment/profile/chapter filtering, URL policy, duplicates, and limits.');

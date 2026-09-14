@@ -45,6 +45,14 @@ class WebImportTest {
         assertNull(last.getRequestProperty("Referer"))
         assertTrue(first.disconnected && last.disconnected)
     }
+    @Test fun largeCommentImagesAreNeverSelectedAsChapterPagesByDefault() {
+        val data = JSONObject().put("url", "https://example.com/chapter").put("images", JSONArray().put(
+            JSONObject().put("url", "https://example.com/comment.png").put("width", 1500).put("height", 3000).put("excludedReason", "Comment image")
+        ))
+        val image = WebImageDiscovery.parse(JSONObject.quote(data.toString()), "https://example.com/chapter").images.single()
+        assertEquals("Comment image", image.excludedReason)
+        assertFalse(image.likelyPage)
+    }
     @Test fun rejectsHtmlOversizeAndDowngradeResponsesWithoutLeakingConnections() {
         listOf(
             FakeConnection(URL("https://example.com/image"), 200, mime = "text/html"),

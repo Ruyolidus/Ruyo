@@ -24,8 +24,8 @@ object WebAddress {
     fun imageName(url: String): String = runCatching { URI(url).path.substringAfterLast('/').take(160).ifBlank { "Web image" } }.getOrDefault("Web image")
 }
 
-data class WebImage(val url: String, val name: String, val width: Int, val height: Int) {
-    val likelyPage: Boolean get() = width >= 300 && height >= 250 || width == 0 || height == 0
+data class WebImage(val url: String, val name: String, val width: Int, val height: Int, val excludedReason: String? = null) {
+    val likelyPage: Boolean get() = excludedReason == null && (width >= 300 && height >= 250 || width == 0 || height == 0)
 }
 data class WebChapter(val url: String, val title: String, val images: List<WebImage>)
 
@@ -33,28 +33,49 @@ object WebImageDiscovery {
     // Called only by the native Find images button. No addJavascriptInterface / native bridge.
     val script = """
         (function() {
-          const seen = new Set(), images = [];
-          for (const img of document.images) {
+          const seen = new Set(), images = [], otherImages = [];
+          const readerSelector = '.reading-content, .chapter-content, .reader-area, .chapter-images, #readerarea, #chapter-content, [data-chapter-content]';
+          const readers = Array.from(document.querySelectorAll(readerSelector)).filter(node => node.querySelector('img'));
+          const commentSelector = '#comments, #disqus_thread, .comments, .comment, .comment-list, .commentlist, .comment-content, .comment-body, .wpd-comment, .wpd-thread-list, .wpdiscuz, [role="comment"]';
+          const responsiveSource = img => {
+            const set = img.getAttribute('data-srcset') || img.getAttribute('srcset') || '';
+            let best = null;
+            for (const match of set.matchAll(/(?:^|,)\s*(\S+)\s+([0-9]+(?:\.[0-9]+)?)(w|x)\s*(?=,|$)/g)) {
+              const score = Number(match[2]);
+              if (!best || score > best.score) best = { url: match[1], score: score };
+            }
+            return best && best.url;
+          };
+          for (const img of Array.from(document.images).slice(0, 2000)) {
             if (images.length >= 200) break;
             const style = getComputedStyle(img);
             if (style.display === 'none' || style.visibility === 'hidden') continue;
             const lazy = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original');
-            const raw = lazy || img.currentSrc || img.src;
+            const raw = lazy || responsiveSource(img) || img.currentSrc || img.src;
             if (!raw) continue;
             try {
               const url = new URL(raw.trim(), document.baseURI);
               if (url.protocol !== 'https:' || url.username || url.password) continue;
               url.hash = '';
-              if (seen.has(url.href)) continue;
-              seen.add(url.href);
+              let excludedReason = null;
+              if (img.closest(commentSelector)) excludedReason = 'Comment image';
+              else if (img.closest('nav, header, footer, .avatar, .avatars') || /(?:^|[\s_-])avatar(?:$|[\s_-])/i.test(img.className || '')) excludedReason = 'Navigation or profile image';
+              else if (readers.length && !readers.some(node => node.contains(img))) excludedReason = 'Outside the chapter area';
               const loaded = url.href === img.currentSrc || url.href === img.src;
               const w = (loaded ? img.naturalWidth : 0) || Number(img.getAttribute('width')) || 0;
               const h = (loaded ? img.naturalHeight : 0) || Number(img.getAttribute('height')) || 0;
               if (w > 0 && h > 0 && (w < 160 || h < 120)) continue;
-              images.push({url: url.href, width: w, height: h});
+              // Comment copies cannot suppress a later genuine chapter image.
+              const key = (excludedReason ? 'other:' : 'page:') + url.href;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              const item = {url: url.href, width: w, height: h, excludedReason: excludedReason};
+              if (!excludedReason) images.push(item);
+              else if (otherImages.length < 200) otherImages.push(item);
             } catch (_) {}
           }
-          return JSON.stringify({url: location.href, title: document.title.slice(0,120), images: images});
+          const pageUrls = new Set(images.map(item => item.url));
+          return JSON.stringify({url: location.href, title: document.title.slice(0,120), images: images.concat(otherImages.filter(item => !pageUrls.has(item.url))).slice(0,200)});
         })();
     """.trimIndent()
 
@@ -69,7 +90,8 @@ object WebImageDiscovery {
             runCatching {
                 val item = array.getJSONObject(i)
                 val link = WebAddress.normalize(item.getString("url"))
-                WebImage(link, WebAddress.imageName(link), item.optInt("width").coerceAtLeast(0), item.optInt("height").coerceAtLeast(0))
+                val reason = item.optString("excludedReason").takeIf { it in setOf("Comment image", "Navigation or profile image", "Outside the chapter area") }
+                WebImage(link, WebAddress.imageName(link), item.optInt("width").coerceAtLeast(0), item.optInt("height").coerceAtLeast(0), reason)
             }.getOrNull()
         }.distinctBy { it.url }
         return WebChapter(url, data.optString("title").take(120).ifBlank { URI(url).host }, images)

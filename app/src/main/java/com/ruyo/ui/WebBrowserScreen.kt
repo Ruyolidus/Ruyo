@@ -12,8 +12,11 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
@@ -28,7 +31,7 @@ import com.ruyo.web.WebImageDiscovery
 @SuppressLint("SetJavaScriptEnabled")
 @Composable
 internal fun WebBrowserScreen(model: RuyoModel) {
-    var address by remember { mutableStateOf(model.webUrl) }
+    var address by rememberSaveable { mutableStateOf(model.webUrl) }
     var web by remember { mutableStateOf<WebView?>(null) }
     var progress by remember { mutableIntStateOf(100) }
     var failure by remember { mutableStateOf<String?>(null) }
@@ -47,12 +50,26 @@ internal fun WebBrowserScreen(model: RuyoModel) {
         }.onFailure { failure = it.message ?: "Enter a valid website address." }
     }
     BackHandler(canGoBack && !model.busy) { web?.goBack() }
-    Column(Modifier.fillMaxSize().testTag("web-browser")) {
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(address, { address = it }, singleLine = true, placeholder = { Text("Paste a chapter link") }, label = { Text("Website") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { navigate() }),
-                enabled = !model.busy, modifier = Modifier.weight(1f).testTag("web-address"))
-            TextButton(onClick = ::navigate, enabled = !model.busy, modifier = Modifier.testTag("web-go")) { Text("Go") }
+    Column(Modifier.fillMaxSize().imePadding().testTag("web-browser")) {
+        // Keep native web content clipped below an opaque, independently drawn toolbar.
+        Surface(Modifier.fillMaxWidth().zIndex(1f), color = MaterialTheme.colorScheme.surface) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(address, { address = it }, singleLine = true,
+                    placeholder = { Text("Paste a chapter link") }, label = { Text("Website address") },
+                    leadingIcon = { Icon(AppIcons.Web, null, Modifier.size(20.dp)) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        focusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        unfocusedTextColor = MaterialTheme.colorScheme.onSurface,
+                        focusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unfocusedPlaceholderColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline,
+                    ),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri, imeAction = ImeAction.Go), keyboardActions = KeyboardActions(onGo = { navigate() }),
+                    enabled = !model.busy, modifier = Modifier.weight(1f).heightIn(min = 60.dp).testTag("web-address"))
+                TextButton(onClick = ::navigate, enabled = !model.busy, modifier = Modifier.testTag("web-go")) { Text("Go") }
+            }
         }
         if (progress < 100) LinearProgressIndicator(progress = { progress / 100f }, modifier = Modifier.fillMaxWidth().height(2.dp))
         failure?.let { error ->
@@ -63,9 +80,9 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 }
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth()) {
+        Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
             key(generation) {
-                AndroidView(modifier = Modifier.fillMaxSize(), factory = { context ->
+                AndroidView(modifier = Modifier.fillMaxSize().clipToBounds(), factory = { context ->
                     WebView(context).apply {
                         settings.apply {
                             javaScriptEnabled = true
@@ -125,7 +142,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 EmptyState(AppIcons.Web, "Read from a website", "Paste a chapter link above. Browse inside Ruyo, then choose Find images to import pages you have permission to save.")
             }
         }
-        Surface(color = MaterialTheme.colorScheme.surface) {
+        Surface(Modifier.zIndex(1f), color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                 IconButton(onClick = { web?.goBack() }, enabled = canGoBack && !model.busy) { Icon(AppIcons.Back, "Previous webpage") }
                 IconButton(onClick = { failure = null; web?.reload() }, enabled = !model.busy && model.webUrl.isNotBlank() && !dead) { Icon(AppIcons.Refresh, "Reload webpage") }
@@ -169,21 +186,28 @@ internal fun WebBrowserScreen(model: RuyoModel) {
 @Composable
 internal fun WebImagesSheet(source: WebChapter, dismiss: () -> Unit, import: (Set<String>) -> Unit) {
     var selected by remember(source) { mutableStateOf(source.images.filter { it.likelyPage }.map { it.url }.toSet()) }
+    var showOther by remember(source) { mutableStateOf(false) }
+    val otherCount = source.images.count { it.excludedReason != null }
+    val visible = source.images.filter { showOther || it.excludedReason == null }
     ModalBottomSheet(onDismissRequest = dismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().testTag("web-images-review")) {
             Text("Chapter images", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.titleLarge)
-            Text("${source.images.size} found · Choose pages, then check their thumbnails and order after downloading.", Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("${source.images.size - otherCount} chapter candidates · Check their thumbnails and order after downloading.", Modifier.padding(20.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (otherCount > 0) TextButton(onClick = { showOther = !showOther }, modifier = Modifier.padding(horizontal = 12.dp).testTag("show-other-web-images")) {
+                Text(if (showOther) "Hide other website images ($otherCount)" else "Show other website images ($otherCount)")
+            }
             Row(Modifier.padding(horizontal = 12.dp)) {
-                TextButton(onClick = { selected = source.images.map { it.url }.toSet() }) { Text("Select all") }
+                TextButton(onClick = { selected = selected + visible.map { it.url }.toSet() }) { Text("Select all shown") }
                 TextButton(onClick = { selected = emptySet() }) { Text("Clear selection") }
             }
             LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(max = 400.dp)) {
-                itemsIndexed(source.images, key = { _, image -> image.url }) { index, image ->
+                itemsIndexed(visible, key = { _, image -> image.url }) { index, image ->
                     Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(image.url in selected, { checked -> selected = if (checked) selected + image.url else selected - image.url })
                         Column(Modifier.weight(1f)) {
                             Text("${index + 1}. ${image.name}", maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodyMedium)
                             Text(if (image.width > 0 && image.height > 0) "${image.width} × ${image.height}" else "Loads on demand", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            image.excludedReason?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         }
                     }
                 }
