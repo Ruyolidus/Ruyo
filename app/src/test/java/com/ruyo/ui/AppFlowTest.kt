@@ -38,11 +38,11 @@ class AppFlowTest {
         compose.onNodeWithTag("book-sample").performClick()
         awaitTag("sample-reader")
         capture("reader")
-        compose.onNodeWithTag("sample-panel-0").performClick()
+        compose.onNodeWithTag("sample-panel-0").performTouchInput { click(Offset(width * 0.5f, height * 0.195f)) }
         awaitTag("study-sheet")
         capture("study", "study-sheet")
         compose.onNodeWithTag("save-sentence").performClick()
-        compose.waitUntil(15_000) { model.saved.isNotEmpty() }
+        awaitState { model.saved.isNotEmpty() }
         compose.onNodeWithContentDescription("Close lesson").performClick()
         compose.onNodeWithContentDescription("Back").performClick()
         compose.onNodeWithTag("nav-saved").performClick()
@@ -70,13 +70,15 @@ class AppFlowTest {
         awaitTag("japanese-input")
         capture("bubble-cleanup")
         compose.onNodeWithTag("japanese-input").performTextInput("待って！")
-        compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
-        compose.waitUntil(15_000) { model.draft?.preview != null }
+        compose.onNodeWithTag("japanese-input").assertTextContains("待って！")
+        compose.onNodeWithTag("preview-edit").performScrollTo().assertIsEnabled().performClick()
+        try { awaitState { model.draft?.preview != null } }
+        catch (error: Exception) { capture("preview-failure"); throw error }
         compose.onNodeWithTag("editor-canvas").performScrollTo()
         capture("bubble-preview")
         compose.onNodeWithTag("save-edit").performClick()
         awaitTag("book-reader")
-        compose.waitUntil(15_000) { !model.busy }
+        awaitState { !model.busy }
         val reopened = LocalBookStore(context).open(book)
         assertEquals("待って！", reopened.edits.single().japanese)
         assertTrue(source.sameAs(reopened.original))
@@ -85,6 +87,7 @@ class AppFlowTest {
     }
 
     private fun awaitTag(tag: String) { compose.waitUntil(20_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }; compose.waitForIdle() }
+    private fun awaitState(condition: () -> Boolean) { compose.waitUntil(15_000) { compose.waitForIdle(); condition() } }
     private fun capture(name: String, tag: String = "app-root") {
         compose.waitForIdle()
         val file = File(System.getProperty("ruyo.previewDir"), "ui-$name.png")
