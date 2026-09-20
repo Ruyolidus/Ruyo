@@ -2,6 +2,7 @@ package com.ruyo.ui
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.Point
 import android.graphics.PointF
 import android.net.Uri
 import androidx.compose.runtime.getValue
@@ -22,6 +23,8 @@ import kotlin.math.hypot
 
 data class EditorDraft(val edit: BubbleEdit, val crop: Bitmap, val initialMask: BooleanArray, val existing: Boolean = false,
     val preview: BubblePreview? = null, val revision: Int = 0, val previewVersion: Int = 0, val previewError: String? = null)
+data class AreaSelection(val region: BubbleRegion, val crop: Bitmap, val centers: List<Point>, val x: Int, val y: Int, val error: String? = null)
+
 data class ChapterImport(val title: String, val pages: List<StagedPage>, val appendTo: String? = null, val sourceUrl: String? = null,
     val returnRoute: String = "home", val failures: List<String> = emptyList())
 data class ImportProgress(val done: Int, val total: Int)
@@ -43,6 +46,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     var pageRevision by mutableStateOf(0); private set
     var opened by mutableStateOf<OpenBook?>(null); private set
     var draft by mutableStateOf<EditorDraft?>(null); private set
+    var areaSelection by mutableStateOf<AreaSelection?>(null); private set
     var importing by mutableStateOf<ChapterImport?>(null); private set
     var importProgress by mutableStateOf<ImportProgress?>(null); private set
     var lesson by mutableStateOf<SavedLine?>(null)
@@ -201,13 +205,46 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
             is SelectionResult.Selected -> result.region
             is SelectionResult.Rejected -> { selectionError = result.reason; return@task }
         }
-        val sourceHeight = if (existing == null) withContext(Dispatchers.Default) { SourceLettering.estimateHeight(region) } else existing.sourceLetterHeight
+        opened = book
+        areaSelection = null
+        if (existing != null) { openEditor(book, region, existing); return@task }
+        val centers = withContext(Dispatchers.IO) { store.areaCenters(book, region) }
+        val suggested = centers ?: withContext(Dispatchers.Default) { BubbleAreas.suggest(region) }
+        areaSelection = AreaSelection(region, Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height), suggested, x, y)
+        if (centers == null && suggested.size > 1) { draft = null; selecting = false; route = "areas"; return@task }
+        val selected = withContext(Dispatchers.Default) { BubbleAreas.split(region, suggested).first { it.contains(x, y) } }
+        openEditor(book, selected)
+    }
+    private suspend fun openEditor(book: OpenBook, region: BubbleRegion, existing: BubbleEdit? = null) {
+        val sourceHeight = existing?.sourceLetterHeight ?: withContext(Dispatchers.Default) { SourceLettering.estimateHeight(region) }
         val edit = existing ?: BubbleEdit(region = region, japanese = "", margin = maxOf(2, minOf(region.width, region.height) / 14),
             languageTag = targetLanguage, sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
         val crop = Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height)
         opened = book
         draft = EditorDraft(edit, crop, region.eraseMask.copyOf(), existing != null)
         selecting = false; route = "editor"
+    }
+    fun editAreas() {
+        val area = areaSelection ?: return
+        val book = opened ?: return
+        if (book.edits.any { edit ->
+            val r = edit.region
+            (0 until r.width * r.height).any { r.interior[it % r.width, it / r.width] && area.region.contains(r.left + it % r.width, r.top + it / r.width) }
+        }) { message = "Restore the translations in this joined bubble before changing its areas."; return }
+        if (draft?.edit?.japanese?.isNotBlank() == true) { message = "Save or clear this translation before changing its area."; return }
+        route = "areas"
+    }
+    fun setAreaCenters(centers: List<Point>) { areaSelection = areaSelection?.copy(centers = centers, error = null) }
+    fun cancelAreas() { if (draft != null) route = "editor" else cancelEditor() }
+    fun applyAreas() = task {
+        val area = areaSelection ?: return@task
+        val book = opened ?: return@task
+        val parts = withContext(Dispatchers.Default) { runCatching { BubbleAreas.split(area.region, area.centers) } }
+        if (parts.isFailure) { areaSelection = area.copy(error = parts.exceptionOrNull()?.message); return@task }
+        withContext(Dispatchers.IO) { store.saveAreas(book, area.region, area.centers) }
+        val selected = parts.getOrThrow().firstOrNull { it.contains(area.x, area.y) } ?: parts.getOrThrow().first()
+        openEditor(book, selected)
+        message = if (parts.getOrThrow().size > 1) "Areas saved. Tap each part in the reader to edit it independently." else "Using one text area"
     }
     fun toggleSelection() { selectionError = null; selecting = !selecting }
     fun changeText(value: String) { draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
@@ -271,7 +308,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         pageLoader.clear(); pageRevision++
         opened = null; draft = null; route = "book"; message = "Original bubble restored"
     }
-    fun cancelEditor() { draft = null; opened = null; route = "book" }
+    fun cancelEditor() { areaSelection = null; draft = null; opened = null; route = "book" }
     fun studySample(id: String) {
         val line = SampleChapter.lines.first { it.id == id }
         lesson = SavedLine("sample:$id", line.japanese, "Before the rain", id)

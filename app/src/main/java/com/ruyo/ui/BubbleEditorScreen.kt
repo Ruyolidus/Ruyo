@@ -72,6 +72,7 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
         }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (model.areaSelection != null) TextButton(onClick = model::editAreas, enabled = !model.busy) { Text("Adjust joined bubble areas") }
                 OutlinedTextField(value = draft.edit.japanese, onValueChange = model::changeText, enabled = !model.busy,
                     label = { Text("Translation text") }, placeholder = { Text("Enter or paste the translated dialogue") }, minLines = 2, maxLines = 4,
                     supportingText = { Text("${draft.edit.japanese.length} / 512 · Entered manually in this build") }, modifier = Modifier.fillMaxWidth().testTag("japanese-input"))

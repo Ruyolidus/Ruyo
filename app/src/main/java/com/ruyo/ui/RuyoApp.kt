@@ -70,6 +70,7 @@ private fun AppContent(model: RuyoModel) {
     fun back() {
         when (model.route) {
             "editor" -> discard = true
+            "areas" -> model.cancelAreas()
             "import" -> discardImport = true
             "pages" -> model.reader()
             else -> model.home()
@@ -97,6 +98,7 @@ private fun AppContent(model: RuyoModel) {
                         "import" -> "Add chapter"
                         "web" -> runCatching { java.net.URI(model.webUrl).host }.getOrNull() ?: "Browse"
                         "editor" -> "Edit bubble"
+                        "areas" -> "Text areas"
                         else -> when (model.tab) { "saved" -> "Saved"; "settings" -> "Settings"; else -> "Library" }
                     },
                     back = if (home) null else ({ if (!model.busy) back() }),
@@ -147,6 +149,7 @@ private fun AppContent(model: RuyoModel) {
                 "import" -> ImportReviewScreen(model) { pickImages(model.importing?.appendTo) }
                 "web" -> WebBrowserScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
+                "areas" -> model.areaSelection?.let { BubbleAreasScreen(model, it) }
                 else -> when (model.tab) {
                     "saved" -> SavedScreen(model)
                     "settings" -> SettingsScreen(model)

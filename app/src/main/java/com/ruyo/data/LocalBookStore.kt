@@ -8,6 +8,7 @@ import android.util.AtomicFile
 import android.util.Base64
 import com.ruyo.importer.ImageImporter
 import com.ruyo.reader.BubbleEdit
+import com.ruyo.reader.BubbleAreas
 import com.ruyo.reader.BubbleEditRenderer
 import com.ruyo.reader.BubbleRegion
 import com.ruyo.reader.PixelMask
@@ -199,6 +200,25 @@ class LocalBookStore(context: Context) {
         write(savedFile, JSONArray().apply { next.forEach { put(JSONObject().put("id", it.id).put("japanese", it.japanese).put("source", it.source).put("sampleId", it.sampleId.orEmpty()).put("language", it.languageTag)) } }.toString())
         return next
     }
+
+    fun areaCenters(book: OpenBook, region: BubbleRegion): List<android.graphics.Point>? {
+        val file = File(pageFolder(book.book, book.page), "areas.json")
+        if (!file.exists()) return null
+        val entry = JSONObject(read(file)).optJSONArray(areaKey(region)) ?: return null
+        require(entry.length() in 1..BubbleAreas.MAX_AREAS)
+        return (0 until entry.length()).map { i -> entry.getJSONArray(i).let { android.graphics.Point(it.getInt(0), it.getInt(1)) } }
+    }
+
+    fun saveAreas(book: OpenBook, region: BubbleRegion, centers: List<android.graphics.Point>) {
+        BubbleAreas.split(region, centers)
+        val file = File(pageFolder(book.book, book.page), "areas.json")
+        val obj = if (file.exists()) JSONObject(read(file)) else JSONObject()
+        require(obj.has(areaKey(region)) || obj.length() < 40) { "This image already has 40 saved area groups." }
+        obj.put(areaKey(region), JSONArray().apply { centers.forEach { put(JSONArray().put(it.x).put(it.y)) } })
+        write(file, obj.toString())
+    }
+
+    private fun areaKey(region: BubbleRegion) = listOf(region.left, region.top, region.width, region.height).joinToString(":")
 
     private fun readEdits(dir: File): List<BubbleEdit> {
         val array = JSONArray(read(File(dir, "edits.json")))
