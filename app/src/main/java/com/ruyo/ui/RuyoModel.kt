@@ -75,6 +75,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private var profileReturnRoute = "home"
     private var aiOperation: Job? = null
     private var aiGeneration = 0L
+    private var automaticEditorId: String? = null
 
     init { refresh() }
     fun refresh() = task {
@@ -229,7 +230,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val centers = withContext(Dispatchers.IO) { store.areaCenters(book, region) }
         val suggested = centers ?: withContext(Dispatchers.Default) { BubbleAreas.suggest(region) }
         areaSelection = AreaSelection(region, Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height), suggested, x, y)
-        if (centers == null && suggested.size > 1) { draft = null; selecting = false; route = "areas"; return@task }
+        if (centers == null && suggested.size > 1) withContext(Dispatchers.IO) { store.saveAreas(book, region, suggested) }
         val selected = withContext(Dispatchers.Default) { BubbleAreas.split(region, suggested).first { it.contains(x, y) } }
         openEditor(book, selected)
     }
@@ -242,6 +243,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         opened = book
         draft = EditorDraft(edit, crop, region.eraseMask.copyOf(), existing != null)
         selecting = false; route = "editor"
+        automaticEditorId = edit.id
     }
     fun editAreas() {
         val area = areaSelection ?: return
@@ -348,7 +350,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         } catch (error: Exception) { profileError = error.message ?: "Could not open the encrypted provider store." }
     }
     fun editProfiles() { cancelAi(); profileReturnRoute = route; route = "profiles" }
-    fun closeProfiles() { route = profileReturnRoute }
+    fun closeProfiles() { route = profileReturnRoute; if (route == "editor") prepareEditorAutomatically() }
     fun selectProfile(id: String?) {
         cancelAi(); activeProfileId = id
         prefs.edit().putString("activeProfile", id).apply()
@@ -377,27 +379,43 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         aiGeneration++; aiOperation?.cancel(); aiOperation = null; aiStatus = null
     }
     fun recognizeText() = startAi(true)
-    fun translateText() = startAi(false)
-    private fun startAi(recognize: Boolean) {
+    fun translateText() = startAi(false, recognizeFirst = true)
+    private fun prepareEditorAutomatically() {
+        val current = draft ?: return
+        if (route != "editor" || busy || aiStatus != null) return
+        if (current.edit.japanese.isNotBlank()) { if (current.preview == null) preview() }
+        else if (activeProfile != null) translateText()
+    }
+    private fun startAi(recognize: Boolean, recognizeFirst: Boolean = false) {
         if (busy || aiStatus != null) return
         val current = draft ?: return
         val source = opened?.original ?: return
         val profileId = activeProfileId
         if (!recognize && (profileId == null || activeProfile == null)) { aiError = "Add or select a provider profile first."; return }
-        if (!recognize && current.sourceText.isBlank()) { aiError = "Recognize or enter the original text first."; return }
+        if (!recognize && !recognizeFirst && current.sourceText.isBlank()) { aiError = "Recognize or enter the original text first."; return }
         val generation = ++aiGeneration
         val script = ocrScript
-        aiError = null; aiStatus = if (recognize) "Recognizing text on this device…" else "Translating with " + activeProfile?.name + "…"
+        aiError = null; aiStatus = if (recognize || recognizeFirst && current.sourceText.isBlank()) "Recognizing text on this device…" else "Translating with " + activeProfile?.name + "…"
         aiOperation = viewModelScope.launch {
             try {
+                var input = current.sourceText
+                if (!recognize && recognizeFirst && input.isBlank()) {
+                    input = withContext(Dispatchers.Default) { ocrService.recognize(source, current.edit.region, script) }
+                    require(input.isNotBlank() && input.length <= 2000) { "This area contains too much text. Split it into smaller areas." }
+                    ensureActive()
+                    val latest = draft
+                    if (generation != aiGeneration || route != "editor" || latest?.edit?.id != current.edit.id || latest.revision != current.revision || latest.sourceText != current.sourceText) return@launch
+                    draft = latest.copy(sourceText = input)
+                    aiStatus = "Translating with " + activeProfile?.name + "…"
+                }
                 val result = if (recognize) withContext(Dispatchers.Default) { ocrService.recognize(source, current.edit.region, script) }
                 else {
                     val secret = withContext(Dispatchers.IO) { profileStore.get(requireNotNull(profileId)) }
-                    translationService.translate(secret, current.sourceText, current.edit.languageTag)
+                    translationService.translate(secret, input, current.edit.languageTag)
                 }
                 ensureActive()
                 val latest = draft
-                if (generation != aiGeneration || route != "editor" || latest?.edit?.id != current.edit.id || latest.revision != current.revision || latest.sourceText != current.sourceText) return@launch
+                if (generation != aiGeneration || route != "editor" || latest?.edit?.id != current.edit.id || latest.revision != current.revision || latest.sourceText != input) return@launch
                 if (recognize) {
                     require(result.isNotBlank() && result.length <= 2000) { "This area contains too much text. Split it into smaller areas." }
                     draft = latest.copy(sourceText = result)
@@ -422,7 +440,12 @@ class RuyoModel @JvmOverloads constructor(application: Application,
             try { block() }
             catch (error: CancellationException) { throw error }
             catch (error: Exception) { message = error.message ?: "Something went wrong. Please try again." }
-            finally { busy = false }
+            finally {
+                busy = false
+                val pending = automaticEditorId
+                automaticEditorId = null
+                if (pending != null && draft?.edit?.id == pending) prepareEditorAutomatically()
+            }
         }
     }
 }

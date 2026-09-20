@@ -121,7 +121,22 @@ internal fun AiEditorControls(model: RuyoModel, draft: EditorDraft) {
     var profileMenu by remember { mutableStateOf(false) }
     val working = model.busy || model.aiStatus != null
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        OutlinedButton(onClick = { expanded = !expanded }, modifier = Modifier.fillMaxWidth().testTag("toggle-ai")) { Text(if (expanded) "Hide AI translation" else "Translate with AI") }
+        model.aiStatus?.let { status ->
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(status, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = model::cancelAi) { Text("Cancel") }
+            }
+        }
+        model.aiError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("ai-error")) }
+        if (model.activeProfile == null) {
+            OutlinedButton(onClick = model::editProfiles, enabled = !working, modifier = Modifier.fillMaxWidth()) { Text("Choose an AI provider") }
+            Text("Choose a provider once. New bubbles will translate and preview automatically when opened.", style = MaterialTheme.typography.bodySmall)
+        } else Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(model.activeProfile?.name.orEmpty(), style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = model::translateText, enabled = !working, modifier = Modifier.testTag("translate-source")) { Text(if (draft.edit.japanese.isBlank()) "Translate and preview" else "Translate again") }
+        }
+        TextButton(onClick = { expanded = !expanded }, modifier = Modifier.testTag("toggle-ai")) { Text(if (expanded) "Hide source and provider" else "Source and provider") }
         if (expanded) {
             Box {
                 OutlinedButton(onClick = { scriptMenu = true }, enabled = !working, modifier = Modifier.fillMaxWidth()) { Text("Source script: " + model.ocrScript.label) }
@@ -144,16 +159,7 @@ internal fun AiEditorControls(model: RuyoModel, draft: EditorDraft) {
             model.activeProfile?.let { profile ->
                 Text("Sends this text to " + java.net.URI(profile.baseUrl).host + " using " + profile.model + ". Provider charges may apply.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Button(onClick = model::translateText, enabled = !working && draft.sourceText.isNotBlank() && model.activeProfile != null,
-                modifier = Modifier.fillMaxWidth().testTag("translate-source")) { Text("Translate to " + TextLanguages.label(draft.edit.languageTag)) }
-            model.aiStatus?.let { status ->
-                LinearProgressIndicator(Modifier.fillMaxWidth())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(status, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
-                    TextButton(onClick = model::cancelAi) { Text("Cancel") }
-                }
-            }
-            model.aiError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("ai-error")) }
+
         }
     }
 }

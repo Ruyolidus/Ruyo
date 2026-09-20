@@ -256,8 +256,9 @@ class AppFlowTest {
         val source = SampleChapter.build().first().original
         val store = LocalBookStore(context); val book = store.addBitmap("AI test", source)
         val profiles = TestProfiles()
+        var translationCalls = 0
         val model = RuyoModel(context, profiles, OcrService { _, _, _ -> "Wait!" }, TranslationService { _, original, target ->
-            assertEquals("Wait!", original); assertEquals("ja", target); "待って！"
+            translationCalls++; assertEquals("Wait!", original); assertEquals("ja", target); "待って！"
         })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
@@ -267,9 +268,10 @@ class AppFlowTest {
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * .5f, height * .105f)) }
         awaitTag("bubble-editor")
         val editId = model.draft!!.edit.id
+        awaitState { model.draft?.preview != null && !model.busy && model.aiStatus == null }
+        assertEquals("Wait!", model.draft!!.sourceText)
+        assertEquals(1, translationCalls)
         compose.onNodeWithTag("toggle-ai").performScrollTo().performClick()
-        compose.onNodeWithTag("recognize-source").performScrollTo().performClick()
-        awaitState { model.draft?.sourceText == "Wait!" && model.aiStatus == null }
         compose.onNodeWithText("Manage").performScrollTo().performClick()
         awaitTag("provider-profiles")
         capture("provider-profiles")
@@ -287,9 +289,8 @@ class AppFlowTest {
         awaitTag("bubble-editor")
         assertEquals(editId, model.draft!!.edit.id)
         assertEquals("Wait!", model.draft!!.sourceText)
-        compose.onNodeWithTag("toggle-ai").performScrollTo().performClick()
-        compose.onNodeWithTag("translate-source").performScrollTo().performClick()
         awaitState { model.draft?.preview != null && !model.busy && model.aiStatus == null }
+        assertEquals(1, translationCalls)
         assertEquals("待って！", model.draft!!.edit.japanese)
         capture("ai-preview")
         compose.onNodeWithTag("save-edit").performClick()
@@ -312,7 +313,6 @@ class AppFlowTest {
         compose.onNodeWithContentDescription("Edit bubbles").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * .5f, height * .105f)) }
         awaitTag("bubble-editor")
-        compose.runOnIdle { model.changeSourceText("Original"); model.translateText() }
         awaitState { entered.get() }
         compose.runOnIdle { model.changeText("Manual text") }
         release.complete(Unit)
