@@ -79,6 +79,11 @@ class BubbleAreasTest {
             edits.forEach { store.saveEdit(book.id, source, it, book.pages.first().id) }
             val reopened = store.openPage(book, book.pages.first())
             assertEquals(2, reopened.edits.size)
+            assertTrue(runCatching {
+                store.saveEdit(book.id, source, BubbleEdit(region = region, japanese = "Overlapping edit", margin = 6, languageTag = "en"), book.pages.first().id)
+            }.isFailure)
+            assertTrue(runCatching { store.saveAreas(reopened, region, listOf(local.first())) }.isFailure)
+            assertEquals(2, store.openPage(book, book.pages.first()).edits.size)
             assertEquals(1, reopened.edits.count { it.region.contains(110, 110) })
             assertEquals(1, reopened.edits.count { it.region.contains(238, 238) })
             store.removeEdit(book.id, edits[0].id, book.pages.first().id)

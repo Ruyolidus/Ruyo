@@ -165,6 +165,9 @@ class LocalBookStore(context: Context) {
         val validated = BubbleEditRenderer.preview(source, edit).getOrThrow()
         validated.crop.recycle(); validated.fit.ink.recycle()
         val existing = readEdits(dir)
+        require(existing.none { it.id != edit.id && it.region.overlaps(edit.region) }) {
+            "This area overlaps a saved translation. Restore that translation before changing its boundaries."
+        }
         require(existing.size < 40 || existing.any { it.id == edit.id }) { "This page already has 40 edited bubbles." }
         writeEdits(dir, existing.filterNot { it.id == edit.id } + edit)
     }
@@ -211,6 +214,9 @@ class LocalBookStore(context: Context) {
 
     fun saveAreas(book: OpenBook, region: BubbleRegion, centers: List<android.graphics.Point>) {
         BubbleAreas.split(region, centers)
+        require(readEdits(pageFolder(book.book, book.page)).none { it.region.overlaps(region) }) {
+            "Restore the translations in this joined bubble before changing its areas."
+        }
         val file = File(pageFolder(book.book, book.page), "areas.json")
         val obj = if (file.exists()) JSONObject(read(file)) else JSONObject()
         require(obj.has(areaKey(region)) || obj.length() < 40) { "This image already has 40 saved area groups." }

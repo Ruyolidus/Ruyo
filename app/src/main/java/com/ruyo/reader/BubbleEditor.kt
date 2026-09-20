@@ -19,6 +19,12 @@ data class BubbleRegion(
     val height get() = interior.height
     init { require(eraseMask.size == width * height) }
     fun contains(x: Int, y: Int) = interior[x - left, y - top]
+    fun overlaps(other: BubbleRegion): Boolean {
+        val x0 = maxOf(left, other.left); val x1 = minOf(left + width, other.left + other.width)
+        val y0 = maxOf(top, other.top); val y1 = minOf(top + height, other.top + other.height)
+        for (y in y0 until y1) for (x in x0 until x1) if (contains(x, y) && other.contains(x, y)) return true
+        return false
+    }
 }
 
 data class BubbleEdit(
