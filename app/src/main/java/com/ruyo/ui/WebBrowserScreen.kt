@@ -56,6 +56,27 @@ internal fun WebBrowserScreen(model: RuyoModel) {
             if (dead) { dead = false; generation++ } else web?.loadUrl(url)
         }.onFailure { failure = it.message ?: "Enter a valid website address." }
     }
+    fun discover(read: Boolean) {
+        val view = web ?: return
+        val expected = view.url ?: return
+        scanning = true
+        view.evaluateJavascript(WebImageDiscovery.script) { result ->
+            scanning = false
+            if (model.route == "web" && view === web && view.url == expected) {
+                runCatching { WebImageDiscovery.parse(result, expected) }.onSuccess { source ->
+                    if (read) {
+                        val images = source.images.filter { it.likelyPage }
+                        if (images.isEmpty()) failure = "No chapter images found. Scroll the website to load its images, then try Read again."
+                        else {
+                            val cookies = images.associate { it.url to CookieManager.getInstance().getCookie(it.url).orEmpty() }
+                            model.readWebsite(source.copy(images = images), cookies, view.settings.userAgentString.orEmpty())
+                        }
+                    } else if (source.images.isEmpty()) failure = "No usable images found. Scroll to load the chapter, then try again. Canvas-only readers need a dedicated source adapter."
+                    else candidates = source
+                }.onFailure { failure = it.message ?: "Could not find images on this page." }
+            }
+        }
+    }
     BackHandler(canGoBack && !model.busy) { web?.goBack() }
     BackHandler(model.webAddressExpanded && !model.busy) { model.webAddressExpanded = false }
     Column(Modifier.fillMaxSize().imePadding().testTag("web-browser")) {
@@ -147,7 +168,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 })
             }
             if (model.webUrl.isBlank()) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                EmptyState(AppIcons.Web, "Read from a website", "Tap the address icon at the top right to open a chapter. Browse here, or use Find images to save pages for offline reading.")
+                EmptyState(AppIcons.Web, "Read from a website", "Tap the address icon at the top right to open a chapter. Use Read for translation and editing while reading, or Import to save pages for offline reading.")
             }
         }
         Surface(Modifier.zIndex(1f), color = MaterialTheme.colorScheme.surface) {
@@ -156,20 +177,10 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 IconButton(onClick = { failure = null; web?.reload() }, enabled = !model.busy && model.webUrl.isNotBlank() && !dead) { Icon(AppIcons.Refresh, "Reload webpage") }
                 IconButton(onClick = { clearData = true }, enabled = !model.busy) { Icon(AppIcons.Trash, "Clear browsing data", Modifier.size(20.dp)) }
                 Spacer(Modifier.weight(1f))
-                Button(onClick = {
-                    val view = web ?: return@Button
-                    val expected = view.url ?: return@Button
-                    scanning = true
-                    view.evaluateJavascript(WebImageDiscovery.script) { result ->
-                        scanning = false
-                        if (model.route == "web" && view === web && view.url == expected) {
-                            runCatching { WebImageDiscovery.parse(result, expected) }.onSuccess {
-                                if (it.images.isEmpty()) failure = "No usable images found. Scroll to load the chapter, then try again. Canvas-only readers need a dedicated source adapter."
-                                else candidates = it
-                            }.onFailure { failure = it.message ?: "Could not find images on this page." }
-                        }
-                    }
-                }, enabled = !model.busy && !scanning && model.webUrl.isNotBlank() && !dead, modifier = Modifier.testTag("find-web-images")) { Text(if (scanning) "Finding…" else "Find images") }
+                TextButton(onClick = { discover(false) }, enabled = !model.busy && !scanning && model.webUrl.isNotBlank() && !dead,
+                    modifier = Modifier.testTag("find-web-images")) { Text("Import") }
+                Button(onClick = { discover(true) }, enabled = !model.busy && !scanning && model.webUrl.isNotBlank() && !dead,
+                    modifier = Modifier.testTag("read-web-chapter")) { Text(if (scanning) "Finding…" else "Read") }
             }
         }
     }
@@ -186,7 +197,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
         confirmButton = { TextButton(onClick = {
             clearData = false; web?.stopLoading(); web?.clearCache(true); web?.clearHistory()
             CookieManager.getInstance().removeAllCookies { CookieManager.getInstance().flush() }
-            WebStorage.getInstance().deleteAllData(); model.webUrl = ""; address = ""; generation++
+            WebStorage.getInstance().deleteAllData(); model.clearWebsiteSession(); model.webUrl = ""; address = ""; generation++
         }) { Text("Clear") } }, dismissButton = { TextButton(onClick = { clearData = false }) { Text("Cancel") } })
 }
 

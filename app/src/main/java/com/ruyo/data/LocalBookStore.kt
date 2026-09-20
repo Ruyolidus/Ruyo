@@ -30,10 +30,10 @@ data class ReadingPosition(val pageId: String, val offset: Int)
 data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null, val languageTag: String = "ja")
 
 /** Disk operations belong on IO. book.json is the commit point for a chapter import. */
-class LocalBookStore(context: Context) {
-    private val root = File(context.filesDir, "books").apply { mkdirs() }
-    private val staging = File(context.cacheDir, "chapter-imports").apply { mkdirs() }
-    private val savedFile = File(context.filesDir, "saved-lines.json")
+class LocalBookStore(context: Context, storageDirectory: File = context.filesDir, stagingDirectory: File = File(context.cacheDir, "chapter-imports")) {
+    private val root = File(storageDirectory, "books").apply { mkdirs() }
+    private val staging = stagingDirectory.apply { mkdirs() }
+    private val savedFile = File(storageDirectory, "saved-lines.json")
     private val appContext = context.applicationContext
 
     @Synchronized fun list(): List<LocalBook> = root.listFiles().orEmpty().filter { it.isDirectory }.mapNotNull { folder ->

@@ -74,6 +74,7 @@ private fun AppContent(model: RuyoModel) {
             "profiles" -> model.closeProfiles()
             "import" -> discardImport = true
             "pages" -> model.reader()
+            "webread" -> model.returnToWebsite()
             else -> model.home()
         }
     }
@@ -97,6 +98,7 @@ private fun AppContent(model: RuyoModel) {
                         "book" -> model.chapter?.title.orEmpty()
                         "pages" -> "Chapter pages"
                         "import" -> "Add chapter"
+                        "webread" -> model.webReading?.chapter?.title.orEmpty()
                         "web" -> runCatching { java.net.URI(model.webUrl).host }.getOrNull() ?: "Browse"
                         "editor" -> "Edit bubble"
                         "areas" -> "Text areas"
@@ -150,6 +152,7 @@ private fun AppContent(model: RuyoModel) {
                 "pages" -> ChapterPagesScreen(model) { pickImages(model.chapter?.id) }
                 "import" -> ImportReviewScreen(model) { pickImages(model.importing?.appendTo) }
                 "web" -> WebBrowserScreen(model)
+                "webread" -> WebReaderScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
                 "areas" -> model.areaSelection?.let { BubbleAreasScreen(model, it) }
                 "profiles" -> ProviderProfilesScreen(model)
@@ -321,7 +324,7 @@ private fun SettingsScreen(model: RuyoModel) {
             SectionLabel("About")
             SettingLine("Ruyo", "0.4.0 preview")
             Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("This build includes joined bubble areas, on-device text recognition, provider-based translation, and fitted previews. Live browser translation and generated lessons are still in development.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("This build includes joined bubble areas, on-device text recognition, provider-based translation, and fitted previews. Website reading mode supports editing and translation as you scroll. Generated lessons are still in development.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

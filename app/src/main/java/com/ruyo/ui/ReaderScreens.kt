@@ -70,9 +70,13 @@ internal fun BookReader(model: RuyoModel) {
             book.pages.getOrNull(index)?.let { model.rememberPosition(it.id, offset) }
         }
     }
-    DisposableEffect(book.id) { onDispose { model.flushPosition() } }
+    LaunchedEffect(scroll, book.id) {
+        snapshotFlow { scroll.layoutInfo.visibleItemsInfo.map { it.index } }.distinctUntilChanged().collect { model.scrollTranslation?.viewport(it) }
+    }
+    DisposableEffect(book.id) { onDispose { model.flushPosition(); model.pauseScrolling() } }
     Column(Modifier.fillMaxSize().testTag("book-reader")) {
         ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}", translatedLabel = "Translated")
+        ScrollTranslationControls(model)
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("Tap inside a plain, light bubble. Pinch to reach small dialogue.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -112,7 +116,7 @@ internal fun BookReader(model: RuyoModel) {
 }
 
 @Composable
-private fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, detail: String, translatedLabel: String = "Japanese") {
+internal fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, detail: String, translatedLabel: String = "Japanese") {
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { onLanguage(false) }, modifier = Modifier.testTag("show-original"), colors = ButtonDefaults.textButtonColors(contentColor = if (!japanese) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)) { Text("Original", fontWeight = if (!japanese) FontWeight.SemiBold else FontWeight.Normal) }
@@ -124,7 +128,7 @@ private fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, det
 }
 
 @Composable
-private fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -> Unit)? = null, onTap: (Int, Int) -> Unit) {
+internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -> Unit)? = null, onTap: (Int, Int) -> Unit) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
@@ -183,8 +187,8 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                     }
                 }
             } else Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SectionLabel("Manual translation · " + com.ruyo.reader.TextLanguages.label(line.languageTag))
-                Text("This is the text you entered for this bubble. You can save it now; AI grammar and vocabulary explanations are coming in a later build.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SectionLabel("Translation · " + com.ruyo.reader.TextLanguages.label(line.languageTag))
+                Text("This is the text shown in this bubble for this bubble. You can save it now; AI grammar and vocabulary explanations are coming in a later build.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Button(onClick = { model.toggleSaved(line) }, enabled = !model.busy, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp).height(48.dp).testTag("save-sentence")) {

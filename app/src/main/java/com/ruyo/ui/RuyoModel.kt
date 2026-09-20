@@ -18,6 +18,7 @@ import com.ruyo.sample.SampleChapter
 import com.ruyo.sample.SamplePage
 import com.ruyo.web.WebChapter
 import com.ruyo.web.WebImageDownload
+import com.ruyo.web.WebReadingSession
 import kotlinx.coroutines.*
 import kotlin.math.ceil
 import kotlin.math.hypot
@@ -76,6 +77,60 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private var aiOperation: Job? = null
     private var aiGeneration = 0L
     private var automaticEditorId: String? = null
+    var webReading by mutableStateOf<WebReadingSession?>(null); private set
+    var webPosition by mutableStateOf(0 to 0); private set
+    var scrollTranslation by mutableStateOf<ScrollTranslation?>(null); private set
+    private var scrollSettings: TranslationSettings? = null
+    private var editorWebIndex: Int? = null
+    private val editorStore get() = if (editorWebIndex != null) requireNotNull(webReading).store else store
+    private val editorReturnRoute get() = if (editorWebIndex != null) "webread" else "book"
+
+    fun readWebsite(source: WebChapter, cookies: Map<String, String>, userAgent: String) = task {
+        require(source.images.isNotEmpty()) { "No chapter images found. Scroll the website to load its images, then try Read again." }
+        scrollTranslation?.pause()?.join()
+        val previous = webReading
+        if (previous != null && previous.chapter.url == source.url && previous.images.map { it.url } == source.images.map { it.url }) {
+            route = "webread"; japanese = true; selectionError = null
+            configureScroll(previous.store, previous.images.size, { previous.load(it) }, { previous.changed() })
+            return@task
+        }
+        webReading?.close()
+        withContext(Dispatchers.IO) { WebReadingSession.clearAbandoned(getApplication()) }
+        val session = WebReadingSession(getApplication(), source, cookies, userAgent)
+        webReading = session; webPosition = 0 to 0; editorWebIndex = null
+        route = "webread"; japanese = true; selectionError = null
+        configureScroll(session.store, source.images.size, { session.load(it) }, { session.changed() })
+    }
+    fun clearWebsiteSession() = task {
+        scrollTranslation?.pause()?.join()
+        webReading?.close(); webReading = null; scrollTranslation = null; webPosition = 0 to 0
+    }
+    fun rememberWebPosition(index: Int, offset: Int) { webPosition = index to offset }
+    fun returnToWebsite() { pauseScrolling(); route = "web"; selecting = false; selectionError = null }
+    fun pauseScrolling() { scrollTranslation?.pause() }
+    fun startScrolling() {
+        if (busy) return
+        if (activeProfile == null) { editProfiles(); return }
+        scrollSettings = TranslationSettings(requireNotNull(activeProfileId), targetLanguage, ocrScript)
+        japanese = true; selecting = false
+        scrollTranslation?.start()
+    }
+    private fun configureScroll(storage: LocalBookStore, count: Int, load: suspend (Int) -> OpenBook, invalidate: suspend () -> Unit) {
+        val pipeline = PageTranslationPipeline(storage, ocrService, profileStore, translationService)
+        scrollTranslation = ScrollTranslation(viewModelScope, count) { index, keepGoing, status ->
+            val settings = requireNotNull(scrollSettings)
+            val page = load(index)
+            pipeline.process(page, settings, keepGoing, status) { invalidate(); pageRevision++ }
+        }
+    }
+    fun editWebBubble(index: Int, x: Int, y: Int) = task {
+        val session = webReading ?: return@task
+        scrollTranslation?.pause()?.join()
+        session.changed()
+        val page = session.load(index)
+        editorWebIndex = index
+        selectBubbleInPage(page, x, y)
+    }
 
     init { refresh() }
     fun refresh() = task {
@@ -87,15 +142,15 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun changeTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun home() {
-        cancelAi(); areaSelection = null
+        cancelAi(); pauseScrolling(); areaSelection = null; editorWebIndex = null
         flushPosition()
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
     }
-    fun changeTargetLanguage(value: String) { targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
+    fun changeTargetLanguage(value: String) { pauseScrolling(); targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
     fun openSample() { route = "sample"; japanese = true }
-    fun browse() { route = "web" }
-    fun managePages() { selecting = false; route = "pages" }
+    fun browse() { pauseScrolling(); route = "web" }
+    fun managePages() { pauseScrolling(); selecting = false; route = "pages" }
     fun reader() { route = "book" }
 
     fun importImage(uri: Uri) = importImages(listOf(uri))
@@ -182,10 +237,13 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun openBook(book: LocalBook) = task { setChapter(withContext(Dispatchers.IO) { store.readBook(book.id) }) }
     private suspend fun setChapter(book: LocalBook) {
+        scrollTranslation?.pause()?.join()
+        editorWebIndex = null
         pageLoader.clear()
         chapter = book; opened = null
         readingPosition = withContext(Dispatchers.IO) { store.progress(book) }
         pageRevision++; route = "book"; japanese = true; selecting = false
+        configureScroll(store, book.pages.size, { index -> pageLoader.load(book, book.pages[index]) }, { pageLoader.clear() })
     }
     fun updateChapter(title: String, pageIds: List<String>) = task {
         val book = chapter ?: return@task
@@ -218,19 +276,26 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun selectBubble(x: Int, y: Int, page: OpenBook? = opened) = task {
         val book = page ?: return@task
+        scrollTranslation?.pause()?.join()
+        editorWebIndex = null
+        // A completed background swap may have been saved during cancellation.
+        pageLoader.clear()
+        selectBubbleInPage(pageLoader.load(book.book, book.page), x, y)
+    }
+    private suspend fun selectBubbleInPage(book: OpenBook, x: Int, y: Int) {
         selectionError = null
         val existing = book.edits.findLast { it.region.contains(x, y) }
         val region = if (existing != null) existing.region else when (val result = withContext(Dispatchers.Default) { BubbleSelector.select(book.original, x, y) }) {
             is SelectionResult.Selected -> result.region
-            is SelectionResult.Rejected -> { selectionError = result.reason; return@task }
+            is SelectionResult.Rejected -> { selectionError = result.reason; return }
         }
         opened = book
         areaSelection = null
-        if (existing != null) { openEditor(book, region, existing); return@task }
-        val centers = withContext(Dispatchers.IO) { store.areaCenters(book, region) }
+        if (existing != null) { openEditor(book, region, existing); return }
+        val centers = withContext(Dispatchers.IO) { editorStore.areaCenters(book, region) }
         val suggested = centers ?: withContext(Dispatchers.Default) { BubbleAreas.suggest(region) }
         areaSelection = AreaSelection(region, Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height), suggested, x, y)
-        if (centers == null && suggested.size > 1) withContext(Dispatchers.IO) { store.saveAreas(book, region, suggested) }
+        if (centers == null && suggested.size > 1) withContext(Dispatchers.IO) { editorStore.saveAreas(book, region, suggested) }
         val selected = withContext(Dispatchers.Default) { BubbleAreas.split(region, suggested).first { it.contains(x, y) } }
         openEditor(book, selected)
     }
@@ -263,12 +328,12 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val book = opened ?: return@task
         val parts = withContext(Dispatchers.Default) { runCatching { BubbleAreas.split(area.region, area.centers) } }
         if (parts.isFailure) { areaSelection = area.copy(error = parts.exceptionOrNull()?.message); return@task }
-        withContext(Dispatchers.IO) { store.saveAreas(book, area.region, area.centers) }
+        withContext(Dispatchers.IO) { editorStore.saveAreas(book, area.region, area.centers) }
         val selected = parts.getOrThrow().firstOrNull { it.contains(area.x, area.y) } ?: parts.getOrThrow().first()
         openEditor(book, selected)
         message = if (parts.getOrThrow().size > 1) "Areas saved. Tap each part in the reader to edit it independently." else "Using one text area"
     }
-    fun toggleSelection() { selectionError = null; selecting = !selecting }
+    fun toggleSelection() { pauseScrolling(); selectionError = null; selecting = !selecting }
     fun changeText(value: String) { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeEditLanguage(value: String) { updateLettering { it.copy(languageTag = TextLanguages.normalize(value)) } }
     fun changeFont(value: String) { updateLettering { it.copy(fontFamily = LetteringFont.fromId(value).family) } }
@@ -321,19 +386,27 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val current = draft ?: return@task
         if (current.preview == null) return@task
         val book = opened ?: return@task
-        withContext(Dispatchers.IO) { store.saveEdit(book.book.id, book.original, current.edit, book.page.id) }
-        pageLoader.clear(); pageRevision++
-        opened = null; draft = null; route = "book"; japanese = true
-        message = "Bubble saved"
+        withContext(Dispatchers.IO) { editorStore.saveEdit(book.book.id, book.original, current.edit, book.page.id) }
+        finishEditor("Bubble saved")
     }
     fun removeEdit() = task {
         val current = draft ?: return@task
         val book = opened ?: return@task
-        withContext(Dispatchers.IO) { store.removeEdit(book.book.id, current.edit.id, book.page.id) }
-        pageLoader.clear(); pageRevision++
-        opened = null; draft = null; route = "book"; message = "Original bubble restored"
+        withContext(Dispatchers.IO) { editorStore.removeEdit(book.book.id, current.edit.id, book.page.id) }
+        finishEditor("Original bubble restored")
     }
-    fun cancelEditor() { cancelAi(); aiError = null; areaSelection = null; draft = null; opened = null; route = "book" }
+    private suspend fun finishEditor(notice: String) {
+        if (editorWebIndex != null) webReading?.changed() else pageLoader.clear()
+        pageRevision++
+        val index = editorWebIndex ?: chapter?.pages?.indexOfFirst { it.id == opened?.page?.id }
+        if (index != null && index >= 0) scrollTranslation?.invalidate(index)
+        opened = null; draft = null; areaSelection = null
+        route = editorReturnRoute; editorWebIndex = null; japanese = true; message = notice
+    }
+    fun cancelEditor() {
+        cancelAi(); aiError = null; areaSelection = null; draft = null; opened = null
+        route = editorReturnRoute; editorWebIndex = null
+    }
     fun studySample(id: String) {
         val line = SampleChapter.lines.first { it.id == id }
         lesson = SavedLine("sample:$id", line.japanese, "Before the rain", id)
@@ -349,10 +422,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
             if (profiles.none { it.id == activeProfileId }) selectProfile(profiles.firstOrNull()?.id)
         } catch (error: Exception) { profileError = error.message ?: "Could not open the encrypted provider store." }
     }
-    fun editProfiles() { cancelAi(); profileReturnRoute = route; route = "profiles" }
+    fun editProfiles() { cancelAi(); pauseScrolling(); profileReturnRoute = route; route = "profiles" }
     fun closeProfiles() { route = profileReturnRoute; if (route == "editor") prepareEditorAutomatically() }
     fun selectProfile(id: String?) {
-        cancelAi(); activeProfileId = id
+        cancelAi(); pauseScrolling(); activeProfileId = id
         prefs.edit().putString("activeProfile", id).apply()
     }
     fun saveProfile(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean, onSaved: () -> Unit) = task {
@@ -373,7 +446,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         aiError = null; draft = draft?.copy(sourceText = value)
     }
     fun changeOcrScript(value: OcrScript) {
-        cancelAi(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
+        cancelAi(); pauseScrolling(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
     }
     fun cancelAi() {
         aiGeneration++; aiOperation?.cancel(); aiOperation = null; aiStatus = null
