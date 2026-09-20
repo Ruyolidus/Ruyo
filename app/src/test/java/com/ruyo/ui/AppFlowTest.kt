@@ -261,7 +261,10 @@ class AppFlowTest {
         })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
-        compose.runOnIdle { model.selectBubble(source.width / 2, (source.height * .105f).toInt(), store.open(book)) }
+        compose.onNodeWithTag("book-" + book.id).performClick()
+        awaitTag("imported-page")
+        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * .5f, height * .105f)) }
         awaitTag("bubble-editor")
         val editId = model.draft!!.edit.id
         compose.onNodeWithTag("toggle-ai").performScrollTo().performClick()
@@ -304,7 +307,10 @@ class AppFlowTest {
         })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
-        compose.runOnIdle { model.selectBubble(source.width / 2, (source.height * .105f).toInt(), store.open(book)) }
+        compose.onNodeWithTag("book-" + book.id).performClick()
+        awaitTag("imported-page")
+        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * .5f, height * .105f)) }
         awaitTag("bubble-editor")
         compose.runOnIdle { model.changeSourceText("Original"); model.translateText() }
         awaitState { entered.get() }
