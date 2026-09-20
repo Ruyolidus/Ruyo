@@ -26,7 +26,7 @@ class ScrollTranslation(
     private var generation = 0
     fun viewport(visible: List<Int>) {
         val valid = visible.distinct().filter { it in 0 until pageCount }.sorted()
-        window = (valid.take(3) + listOfNotNull(valid.lastOrNull()?.plus(1)?.takeIf { it < pageCount })).distinct()
+        window = (valid + listOfNotNull(valid.lastOrNull()?.plus(1)?.takeIf { it < pageCount })).distinct()
         schedule()
     }
     fun start() { error = null; running = true; schedule() }
@@ -34,6 +34,7 @@ class ScrollTranslation(
         running = false; generation++; status = null
         return job?.also { it.cancel() }
     }
+    fun reset() { pause(); completed.clear(); notes = emptyMap(); error = null }
     fun invalidate(index: Int) { completed.remove(index); notes = notes - index }
     private fun schedule() {
         if (!scope.isActive || !running || job?.isActive == true || job?.isCompleted == false) return

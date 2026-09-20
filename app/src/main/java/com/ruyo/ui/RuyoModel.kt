@@ -148,7 +148,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
     }
-    fun changeTargetLanguage(value: String) { pauseScrolling(); targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
+    fun changeTargetLanguage(value: String) { scrollTranslation?.reset(); targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
     fun openSample() { route = "sample"; japanese = true }
     fun browse() { pauseScrolling(); route = "web" }
     fun managePages() { pauseScrolling(); selecting = false; route = "pages" }
@@ -247,6 +247,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         configureScroll(store, book.pages.size, { index -> pageLoader.load(book, book.pages[index]) }, { pageLoader.clear() })
     }
     fun updateChapter(title: String, pageIds: List<String>) = task {
+        scrollTranslation?.pause()?.join()
         val book = chapter ?: return@task
         val updated = withContext(Dispatchers.IO) { store.updateChapter(book.id, title, pageIds) }
         books = withContext(Dispatchers.IO) { store.list() }
@@ -271,6 +272,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         progressJob = viewModelScope.launch(Dispatchers.IO) { store.saveProgress(book.id, position) }
     }
     fun removeBook(book: LocalBook) = task {
+        scrollTranslation?.pause()?.join()
         withContext(Dispatchers.IO) { store.removeBook(book.id) }
         pageLoader.clear()
         books = books.filterNot { it.id == book.id }; home(); message = "Chapter removed from the library"
@@ -426,7 +428,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     fun editProfiles() { cancelAi(); pauseScrolling(); profileReturnRoute = route; route = "profiles" }
     fun closeProfiles() { route = profileReturnRoute; if (route == "editor") prepareEditorAutomatically() }
     fun selectProfile(id: String?) {
-        cancelAi(); pauseScrolling(); activeProfileId = id
+        cancelAi(); scrollTranslation?.reset(); activeProfileId = id
         prefs.edit().putString("activeProfile", id).apply()
     }
     fun saveProfile(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean, onSaved: () -> Unit) = task {
@@ -447,7 +449,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         aiError = null; draft = draft?.copy(sourceText = value)
     }
     fun changeOcrScript(value: OcrScript) {
-        cancelAi(); pauseScrolling(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
+        cancelAi(); scrollTranslation?.reset(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
     }
     fun cancelAi() {
         aiGeneration++; aiOperation?.cancel(); aiOperation = null; aiStatus = null

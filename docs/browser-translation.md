@@ -15,7 +15,7 @@ chapter images. Tap any supported bubble to open the automatic editor; Save retu
 to the stored page/offset. Existing text, serif/sans/condensed/monospace, bold/italic,
 size, padding, and cleanup corrections use the same editor as local pages.
 
-**Translate** starts a single worker for visible images (up to three) and one image
+**Translate** starts a single worker for visible images and one image
 ahead. A visibility change reprioritizes subsequent work without restarting the
 current provider call. Completed edits are persisted in the session store and reused.
 The worker pauses on failure, edit, navigation, profile/script/language change, and

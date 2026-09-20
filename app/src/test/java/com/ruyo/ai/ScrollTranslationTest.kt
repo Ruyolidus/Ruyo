@@ -32,6 +32,30 @@ class ScrollTranslationTest {
         } finally { scope.cancel() }
     }
 
+    @Test fun shortImagesSharingOneViewportAreAllProcessedBeforeLookahead() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        val visited = mutableListOf<Int>()
+        val scroll = ScrollTranslation(scope, 8) { index, _, _ -> visited += index; "Ready" }
+        try {
+            scroll.viewport(listOf(0, 1, 2, 3, 4)); scroll.start(); yield()
+            assertEquals(listOf(0, 1, 2, 3, 4, 5), visited)
+        } finally { scope.cancel() }
+    }
+
+    @Test fun resettingRecognitionAllowsUnsupportedPagesToBeScannedAgain() = runBlocking {
+        val scope = CoroutineScope(coroutineContext + SupervisorJob())
+        var calls = 0
+        val scroll = ScrollTranslation(scope, 1) { _, _, _ -> calls++; "No supported dialogue" }
+        try {
+            scroll.viewport(listOf(0)); scroll.start(); yield()
+            assertEquals(1, calls)
+            scroll.pause(); scroll.start(); yield()
+            assertEquals(1, calls)
+            scroll.reset(); scroll.start(); yield()
+            assertEquals(2, calls)
+        } finally { scope.cancel() }
+    }
+
     @Test fun failurePausesInsteadOfRetryingOnEveryScroll() = runBlocking {
         val scope = CoroutineScope(coroutineContext + SupervisorJob())
         var calls = 0
