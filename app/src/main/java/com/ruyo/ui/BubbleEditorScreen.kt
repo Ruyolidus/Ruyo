@@ -32,6 +32,7 @@ import kotlin.math.roundToInt
 
 @Composable
 internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
+    val working = model.busy || model.aiStatus != null
     var tool by remember(draft.edit.id) { mutableStateOf("Erase text") }
     var radius by remember(draft.edit.id) { mutableFloatStateOf(8f) }
     var showingPreview by remember(draft.edit.id) { mutableStateOf(false) }
@@ -51,16 +52,16 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                 Row(Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(if (showingPreview) "Translation preview" else "Clean the original lettering", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     if (draft.preview != null) TextButton(onClick = { showingPreview = !showingPreview }) { Text(if (showingPreview) "Show mask" else "Preview") }
-                    else IconButton(onClick = model::resetMask, enabled = !model.busy) { Icon(AppIcons.Undo, "Reset cleanup mask", Modifier.size(20.dp)) }
+                    else IconButton(onClick = model::resetMask, enabled = !working) { Icon(AppIcons.Undo, "Reset cleanup mask", Modifier.size(20.dp)) }
                 }
-                EditorCanvas(draft, showingPreview, tool, radius, !model.busy) { points -> model.brush(points, radius, tool == "Erase text") }
+                EditorCanvas(draft, showingPreview, tool, radius, !working) { points -> model.brush(points, radius, tool == "Erase text") }
                 if (!showingPreview) {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 6.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        listOf("Erase text", "Restore", "Move").forEach { label -> FilterChip(selected = tool == label, onClick = { tool = label }, enabled = !model.busy, label = { Text(label) }, shape = RoundedCornerShape(6.dp)) }
+                        listOf("Erase text", "Restore", "Move").forEach { label -> FilterChip(selected = tool == label, onClick = { tool = label }, enabled = !working, label = { Text(label) }, shape = RoundedCornerShape(6.dp)) }
                     }
                     Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                         Text("Brush", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Slider(value = radius, onValueChange = { radius = it }, valueRange = 2f..32f, enabled = tool != "Move" && !model.busy, modifier = Modifier.weight(1f))
+                        Slider(value = radius, onValueChange = { radius = it }, valueRange = 2f..32f, enabled = tool != "Move" && !working, modifier = Modifier.weight(1f))
                         Text(radius.roundToInt().toString(), style = MaterialTheme.typography.bodySmall)
                     }
                     Text("Red pixels will be removed. Brush only over letters; use Restore to protect artwork.", Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -70,34 +71,35 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
                 }
             }
         }
+        item { AiEditorControls(model, draft) }
         item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (model.areaSelection != null) TextButton(onClick = model::editAreas, enabled = !model.busy) { Text("Adjust joined bubble areas") }
-                OutlinedTextField(value = draft.edit.japanese, onValueChange = model::changeText, enabled = !model.busy,
+                if (model.areaSelection != null) TextButton(onClick = model::editAreas, enabled = !working) { Text("Adjust joined bubble areas") }
+                OutlinedTextField(value = draft.edit.japanese, onValueChange = model::changeText, enabled = !working,
                     label = { Text("Translation text") }, placeholder = { Text("Enter or paste the translated dialogue") }, minLines = 2, maxLines = 4,
-                    supportingText = { Text("${draft.edit.japanese.length} / 512 · Entered manually in this build") }, modifier = Modifier.fillMaxWidth().testTag("japanese-input"))
+                    supportingText = { Text("${draft.edit.japanese.length} / 512 · Review before saving") }, modifier = Modifier.fillMaxWidth().testTag("japanese-input"))
                 LetteringControls(draft.edit, model)
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Text size", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = fontScale, onValueChange = { fontScale = it },
                         onValueChangeFinished = { model.changeFontScale(fontScale); if (draft.edit.japanese.isNotBlank()) { keyboard?.hide(); model.preview() } },
-                        valueRange = 0.6f..1.6f, enabled = !model.busy, modifier = Modifier.weight(1f).testTag("text-size"))
+                        valueRange = 0.6f..1.6f, enabled = !working, modifier = Modifier.weight(1f).testTag("text-size"))
                     Text("${(fontScale * 100).roundToInt()}%", style = MaterialTheme.typography.bodySmall)
                 }
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Text padding", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Slider(value = padding, onValueChange = { padding = it },
                         onValueChangeFinished = { model.changeMargin(padding.roundToInt()); if (draft.edit.japanese.isNotBlank()) { keyboard?.hide(); model.preview() } },
-                        valueRange = 2f..maxOf(8f, minOf(draft.edit.region.width, draft.edit.region.height) / 4f), enabled = !model.busy,
+                        valueRange = 2f..maxOf(8f, minOf(draft.edit.region.width, draft.edit.region.height) / 4f), enabled = !working,
                         modifier = Modifier.weight(1f).testTag("text-padding"))
                 }
                 Text("Text shrinks to fit automatically. Padding controls the empty space around it. Both sliders update the preview when released.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 draft.previewError?.let { error ->
                     Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.testTag("preview-error"))
                 }
-                Button(onClick = { keyboard?.hide(); model.preview() }, enabled = draft.edit.japanese.isNotBlank() && !model.busy,
-                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("preview-edit")) { Text(if (model.busy) "Rendering…" else "Preview replacement") }
-                if (draft.existing) TextButton(onClick = model::removeEdit, enabled = !model.busy, modifier = Modifier.fillMaxWidth()) { Text("Restore original bubble") }
+                Button(onClick = { keyboard?.hide(); model.preview() }, enabled = draft.edit.japanese.isNotBlank() && !working,
+                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("preview-edit")) { Text(if (working) "Rendering…" else "Preview replacement") }
+                if (draft.existing) TextButton(onClick = model::removeEdit, enabled = !working, modifier = Modifier.fillMaxWidth()) { Text("Restore original bubble") }
             }
         }
     }

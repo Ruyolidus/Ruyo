@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.ruyo.data.*
+import com.ruyo.ai.*
 import com.ruyo.importer.NaturalOrder
 import com.ruyo.reader.*
 import com.ruyo.sample.SampleChapter
@@ -22,14 +23,18 @@ import kotlin.math.ceil
 import kotlin.math.hypot
 
 data class EditorDraft(val edit: BubbleEdit, val crop: Bitmap, val initialMask: BooleanArray, val existing: Boolean = false,
-    val preview: BubblePreview? = null, val revision: Int = 0, val previewVersion: Int = 0, val previewError: String? = null)
+    val sourceText: String = "", val preview: BubblePreview? = null, val revision: Int = 0, val previewVersion: Int = 0, val previewError: String? = null)
 data class AreaSelection(val region: BubbleRegion, val crop: Bitmap, val centers: List<Point>, val x: Int, val y: Int, val error: String? = null)
 
 data class ChapterImport(val title: String, val pages: List<StagedPage>, val appendTo: String? = null, val sourceUrl: String? = null,
     val returnRoute: String = "home", val failures: List<String> = emptyList())
 data class ImportProgress(val done: Int, val total: Int)
 
-class RuyoModel(application: Application) : AndroidViewModel(application) {
+class RuyoModel @JvmOverloads constructor(application: Application,
+    private val profileStore: ProfileStore = EncryptedProfileStore(application),
+    private val ocrService: OcrService = BubbleOcr(),
+    private val translationService: TranslationService = TranslationClient(),
+) : AndroidViewModel(application) {
     val store = LocalBookStore(application)
     val pageLoader = ReaderPageLoader(store)
     private val prefs = application.getSharedPreferences("settings", 0)
@@ -60,15 +65,28 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     var webAddressExpanded by mutableStateOf(false)
     var targetLanguage by mutableStateOf(runCatching { TextLanguages.normalize(prefs.getString("targetLanguage", "ja") ?: "ja") }.getOrDefault("ja")); private set
 
+    var profiles by mutableStateOf<List<ProviderProfile>>(emptyList()); private set
+    var activeProfileId by mutableStateOf(prefs.getString("activeProfile", null)); private set
+    val activeProfile get() = profiles.firstOrNull { it.id == activeProfileId }
+    var profileError by mutableStateOf<String?>(null); private set
+    var aiStatus by mutableStateOf<String?>(null); private set
+    var aiError by mutableStateOf<String?>(null); private set
+    var ocrScript by mutableStateOf(runCatching { OcrScript.valueOf(prefs.getString("ocrScript", "LATIN") ?: "LATIN") }.getOrDefault(OcrScript.LATIN)); private set
+    private var profileReturnRoute = "home"
+    private var aiOperation: Job? = null
+    private var aiGeneration = 0L
+
     init { refresh() }
     fun refresh() = task {
         val data = withContext(Dispatchers.IO) { store.list() to store.savedLines() }
         books = data.first; saved = data.second
         if (samples.isEmpty()) samples = withContext(Dispatchers.Default) { SampleChapter.build() }
+        loadProfiles()
         ready = true
     }
     fun changeTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun home() {
+        cancelAi(); areaSelection = null
         flushPosition()
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
@@ -216,6 +234,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         openEditor(book, selected)
     }
     private suspend fun openEditor(book: OpenBook, region: BubbleRegion, existing: BubbleEdit? = null) {
+        cancelAi(); aiError = null
         val sourceHeight = existing?.sourceLetterHeight ?: withContext(Dispatchers.Default) { SourceLettering.estimateHeight(region) }
         val edit = existing ?: BubbleEdit(region = region, japanese = "", margin = maxOf(2, minOf(region.width, region.height) / 14),
             languageTag = targetLanguage, sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
@@ -232,6 +251,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
             (0 until r.width * r.height).any { r.interior[it % r.width, it / r.width] && area.region.contains(r.left + it % r.width, r.top + it / r.width) }
         }) { message = "Restore the translations in this joined bubble before changing its areas."; return }
         if (draft?.edit?.japanese?.isNotBlank() == true) { message = "Save or clear this translation before changing its area."; return }
+        cancelAi()
         route = "areas"
     }
     fun setAreaCenters(centers: List<Point>) { areaSelection = areaSelection?.copy(centers = centers, error = null) }
@@ -247,7 +267,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         message = if (parts.getOrThrow().size > 1) "Areas saved. Tap each part in the reader to edit it independently." else "Using one text area"
     }
     fun toggleSelection() { selectionError = null; selecting = !selecting }
-    fun changeText(value: String) { draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
+    fun changeText(value: String) { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeEditLanguage(value: String) { updateLettering { it.copy(languageTag = TextLanguages.normalize(value)) } }
     fun changeFont(value: String) { updateLettering { it.copy(fontFamily = LetteringFont.fromId(value).family) } }
     fun changeBold(value: Boolean) { updateLettering { it.copy(bold = value) } }
@@ -255,13 +275,15 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
     fun changeMatchSource(value: Boolean) { updateLettering { it.copy(matchSourceSize = value && it.sourceLetterHeight != null) } }
     private fun updateLettering(change: (BubbleEdit) -> BubbleEdit) {
         if (busy) return
+        cancelAi()
         draft = draft?.let { it.copy(edit = change(it.edit), preview = null, previewError = null, revision = it.revision + 1) }
         if (draft?.edit?.japanese?.isNotBlank() == true) preview()
     }
-    fun changeFontScale(value: Float) { draft = draft?.let { it.copy(edit = it.edit.copy(fontScale = value.coerceIn(0.6f, 1.6f)), preview = null, previewError = null, revision = it.revision + 1) } }
-    fun changeMargin(value: Int) { draft = draft?.let { it.copy(edit = it.edit.copy(margin = value), preview = null, previewError = null, revision = it.revision + 1) } }
-    fun resetMask() { draft = draft?.let { it.copy(edit = it.edit.copy(region = it.edit.region.copy(eraseMask = it.initialMask.copyOf())), preview = null, previewError = null, revision = it.revision + 1) } }
+    fun changeFontScale(value: Float) { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(fontScale = value.coerceIn(0.6f, 1.6f)), preview = null, previewError = null, revision = it.revision + 1) } }
+    fun changeMargin(value: Int) { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(margin = value), preview = null, previewError = null, revision = it.revision + 1) } }
+    fun resetMask() { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(region = it.edit.region.copy(eraseMask = it.initialMask.copyOf())), preview = null, previewError = null, revision = it.revision + 1) } }
     fun brush(points: List<PointF>, radius: Float, add: Boolean) {
+        cancelAi()
         val current = draft ?: return
         val region = current.edit.region
         val bits = region.eraseMask.copyOf()
@@ -293,6 +315,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         else latest.copy(preview = null, previewError = result.exceptionOrNull()?.message ?: "Could not fit this text. Try shorter dialogue or less padding.")
     }
     fun saveEdit() = task {
+        if (aiStatus != null) return@task
         val current = draft ?: return@task
         if (current.preview == null) return@task
         val book = opened ?: return@task
@@ -308,7 +331,7 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         pageLoader.clear(); pageRevision++
         opened = null; draft = null; route = "book"; message = "Original bubble restored"
     }
-    fun cancelEditor() { areaSelection = null; draft = null; opened = null; route = "book" }
+    fun cancelEditor() { cancelAi(); aiError = null; areaSelection = null; draft = null; opened = null; route = "book" }
     fun studySample(id: String) {
         val line = SampleChapter.lines.first { it.id == id }
         lesson = SavedLine("sample:$id", line.japanese, "Before the rain", id)
@@ -317,6 +340,81 @@ class RuyoModel(application: Application) : AndroidViewModel(application) {
         lesson = SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter", languageTag = edit.languageTag)
     }
     fun toggleSaved(line: SavedLine) = task { saved = withContext(Dispatchers.IO) { store.toggleSaved(line) } }
+    private suspend fun loadProfiles() {
+        try {
+            profiles = withContext(Dispatchers.IO) { profileStore.list() }
+            profileError = null
+            if (profiles.none { it.id == activeProfileId }) selectProfile(profiles.firstOrNull()?.id)
+        } catch (error: Exception) { profileError = error.message ?: "Could not open the encrypted provider store." }
+    }
+    fun editProfiles() { cancelAi(); profileReturnRoute = route; route = "profiles" }
+    fun closeProfiles() { route = profileReturnRoute }
+    fun selectProfile(id: String?) {
+        cancelAi(); activeProfileId = id
+        prefs.edit().putString("activeProfile", id).apply()
+    }
+    fun saveProfile(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean, onSaved: () -> Unit) = task {
+        try {
+            withContext(Dispatchers.IO) { profileStore.save(profile, replacementKey, removeKey) }
+            loadProfiles(); selectProfile(profile.id); onSaved()
+            message = "Provider saved securely on this device"
+        } catch (error: Exception) { profileError = error.message ?: "Could not save the provider." }
+    }
+    fun deleteProfile(id: String) = task {
+        cancelAi()
+        try { withContext(Dispatchers.IO) { profileStore.delete(id) }; loadProfiles() }
+        catch (error: Exception) { profileError = error.message ?: "Could not remove this provider." }
+    }
+    fun changeSourceText(value: String) {
+        cancelAi()
+        if (value.length > 2000) { aiError = "Use no more than 2000 source characters per area."; return }
+        aiError = null; draft = draft?.copy(sourceText = value)
+    }
+    fun changeOcrScript(value: OcrScript) {
+        cancelAi(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
+    }
+    fun cancelAi() {
+        aiGeneration++; aiOperation?.cancel(); aiOperation = null; aiStatus = null
+    }
+    fun recognizeText() = startAi(true)
+    fun translateText() = startAi(false)
+    private fun startAi(recognize: Boolean) {
+        if (busy || aiStatus != null) return
+        val current = draft ?: return
+        val source = opened?.original ?: return
+        val profileId = activeProfileId
+        if (!recognize && (profileId == null || activeProfile == null)) { aiError = "Add or select a provider profile first."; return }
+        if (!recognize && current.sourceText.isBlank()) { aiError = "Recognize or enter the original text first."; return }
+        val generation = ++aiGeneration
+        val script = ocrScript
+        aiError = null; aiStatus = if (recognize) "Recognizing text on this device…" else "Translating with " + activeProfile?.name + "…"
+        aiOperation = viewModelScope.launch {
+            try {
+                val result = if (recognize) withContext(Dispatchers.Default) { ocrService.recognize(source, current.edit.region, script) }
+                else {
+                    val secret = withContext(Dispatchers.IO) { profileStore.get(requireNotNull(profileId)) }
+                    translationService.translate(secret, current.sourceText, current.edit.languageTag)
+                }
+                ensureActive()
+                val latest = draft
+                if (generation != aiGeneration || route != "editor" || latest?.edit?.id != current.edit.id || latest.revision != current.revision || latest.sourceText != current.sourceText) return@launch
+                if (recognize) {
+                    require(result.isNotBlank() && result.length <= 2000) { "This area contains too much text. Split it into smaller areas." }
+                    draft = latest.copy(sourceText = result)
+                } else {
+                    require(result.isNotBlank() && result.length <= 512) { "The translation exceeds 512 characters. It has not been shortened or applied." }
+                    draft = latest.copy(edit = latest.edit.copy(japanese = result), preview = null, previewError = null, revision = latest.revision + 1)
+                    preview()
+                }
+            } catch (_: TimeoutCancellationException) {
+                if (generation == aiGeneration) aiError = "The request timed out. Retry or choose another profile."
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                if (generation == aiGeneration) aiError = error.message ?: "Could not translate this area. Please try again."
+            } finally { if (generation == aiGeneration) { aiStatus = null; aiOperation = null } }
+        }
+    }
+
     private fun task(block: suspend () -> Unit) {
         if (busy) return
         busy = true

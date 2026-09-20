@@ -71,6 +71,7 @@ private fun AppContent(model: RuyoModel) {
         when (model.route) {
             "editor" -> discard = true
             "areas" -> model.cancelAreas()
+            "profiles" -> model.closeProfiles()
             "import" -> discardImport = true
             "pages" -> model.reader()
             else -> model.home()
@@ -99,6 +100,7 @@ private fun AppContent(model: RuyoModel) {
                         "web" -> runCatching { java.net.URI(model.webUrl).host }.getOrNull() ?: "Browse"
                         "editor" -> "Edit bubble"
                         "areas" -> "Text areas"
+                        "profiles" -> "AI providers"
                         else -> when (model.tab) { "saved" -> "Saved"; "settings" -> "Settings"; else -> "Library" }
                     },
                     back = if (home) null else ({ if (!model.busy) back() }),
@@ -118,7 +120,7 @@ private fun AppContent(model: RuyoModel) {
                                 IconButton(onClick = model::managePages, enabled = !model.busy) { Icon(AppIcons.Pages, "Manage chapter pages") }
                                 IconButton(onClick = { remove = model.chapter }, enabled = !model.busy) { Icon(AppIcons.Trash, "Remove chapter") }
                             }
-                            model.route == "editor" -> TextButton(onClick = model::saveEdit, enabled = model.draft?.preview != null && !model.busy, modifier = Modifier.testTag("save-edit")) { Text("Save") }
+                            model.route == "editor" -> TextButton(onClick = model::saveEdit, enabled = model.draft?.preview != null && !model.busy && model.aiStatus == null, modifier = Modifier.testTag("save-edit")) { Text("Save") }
                         }
                     },
                 )
@@ -150,6 +152,7 @@ private fun AppContent(model: RuyoModel) {
                 "web" -> WebBrowserScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
                 "areas" -> model.areaSelection?.let { BubbleAreasScreen(model, it) }
+                "profiles" -> ProviderProfilesScreen(model)
                 else -> when (model.tab) {
                     "saved" -> SavedScreen(model)
                     "settings" -> SettingsScreen(model)
@@ -305,6 +308,9 @@ private fun SettingsScreen(model: RuyoModel) {
             Text("New edits use this language. Existing translations keep theirs.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
+            OutlinedButton(onClick = model::editProfiles, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("manage-providers")) { Text("Manage AI providers") }
+        }
+        item {
             SectionLabel("On this device")
             SettingLine("Imported chapters", model.books.size.toString())
             SettingLine("Pages", model.books.sumOf { it.pages.size }.toString())
@@ -313,9 +319,9 @@ private fun SettingsScreen(model: RuyoModel) {
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.3.2 preview")
+            SettingLine("Ruyo", "0.4.0 preview")
             Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("This build includes multi-image chapters, website image import, manual bubble editing, and sample lessons. AI translation and OCR are next.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("This build includes joined bubble areas, on-device text recognition, provider-based translation, and fitted previews. Live browser translation and generated lessons are still in development.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
