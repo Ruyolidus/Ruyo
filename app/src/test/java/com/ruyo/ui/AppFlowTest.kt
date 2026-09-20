@@ -2,6 +2,11 @@ package com.ruyo.ui
 
 import android.graphics.BitmapFactory
 import android.net.Uri
+import com.ruyo.ai.*
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import java.util.concurrent.atomic.AtomicBoolean
 import com.ruyo.web.WebChapter
 import com.ruyo.web.WebImage
 import androidx.compose.ui.geometry.Offset
@@ -245,6 +250,74 @@ class AppFlowTest {
         assertEquals("serif", saved.fontFamily)
         assertTrue(saved.bold)
         assertEquals("fr", context.getSharedPreferences("settings", 0).getString("targetLanguage", null))
+    }
+
+    @Test fun recognizedTextTranslatesPreviewsAndSavesWithoutLosingTheEditor() {
+        val source = SampleChapter.build().first().original
+        val store = LocalBookStore(context); val book = store.addBitmap("AI test", source)
+        val profiles = TestProfiles()
+        val model = RuyoModel(context, profiles, OcrService { _, _, _ -> "Wait!" }, TranslationService { _, original, target ->
+            assertEquals("Wait!", original); assertEquals("ja", target); "待って！"
+        })
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        compose.runOnIdle { model.selectBubble(source.width / 2, (source.height * .105f).toInt(), store.open(book)) }
+        awaitTag("bubble-editor")
+        val editId = model.draft!!.edit.id
+        compose.onNodeWithTag("toggle-ai").performScrollTo().performClick()
+        compose.onNodeWithTag("recognize-source").performScrollTo().performClick()
+        awaitState { model.draft?.sourceText == "Wait!" && model.aiStatus == null }
+        compose.onNodeWithText("Manage").performScrollTo().performClick()
+        awaitTag("provider-profiles")
+        capture("provider-profiles")
+        compose.onNodeWithTag("add-provider").performScrollTo().performClick()
+        awaitTag("provider-form")
+        capture("provider-form")
+        compose.onNodeWithText("Cancel").performScrollTo().performClick()
+        compose.onNodeWithContentDescription("Back").performClick()
+        awaitTag("bubble-editor")
+        assertEquals(editId, model.draft!!.edit.id)
+        assertEquals("Wait!", model.draft!!.sourceText)
+        compose.onNodeWithTag("toggle-ai").performScrollTo().performClick()
+        compose.onNodeWithTag("translate-source").performScrollTo().performClick()
+        awaitState { model.draft?.preview != null && !model.busy && model.aiStatus == null }
+        assertEquals("待って！", model.draft!!.edit.japanese)
+        capture("ai-preview")
+        compose.onNodeWithTag("save-edit").performClick()
+        awaitTag("book-reader")
+        awaitState { !model.busy }
+        assertEquals("待って！", store.open(book).edits.single().japanese)
+    }
+
+    @Test fun cancellingAiAndChangingTextRejectsALateProviderResult() {
+        val source = SampleChapter.build().first().original
+        val store = LocalBookStore(context); val book = store.addBitmap("Delayed AI", source)
+        val release = CompletableDeferred<Unit>(); val entered = AtomicBoolean(); val finished = AtomicBoolean()
+        val model = RuyoModel(context, TestProfiles(), OcrService { _, _, _ -> "Source" }, TranslationService { _, _, _ ->
+            withContext(NonCancellable) { entered.set(true); release.await(); finished.set(true); "遅い返事" }
+        })
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        compose.runOnIdle { model.selectBubble(source.width / 2, (source.height * .105f).toInt(), store.open(book)) }
+        awaitTag("bubble-editor")
+        compose.runOnIdle { model.changeSourceText("Original"); model.translateText() }
+        awaitState { entered.get() }
+        compose.runOnIdle { model.changeText("Manual text") }
+        release.complete(Unit)
+        awaitState { finished.get() && model.aiStatus == null }
+        assertEquals("Manual text", model.draft!!.edit.japanese)
+        assertNull(model.draft!!.preview)
+        compose.runOnIdle { model.cancelEditor() }
+        assertEquals("book", model.route)
+        assertNull(model.draft)
+    }
+
+    private class TestProfiles : ProfileStore {
+        private var entries = listOf(ProviderSecret(ProviderProfile(name = "Test profile", kind = ProviderKind.OPENAI, baseUrl = "https://api.openai.com/v1", model = "test-model", hasKey = true), "fixture-only"))
+        override fun list() = entries.map { it.profile }
+        override fun get(id: String) = entries.first { it.profile.id == id }
+        override fun save(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean) { entries = entries.filterNot { it.profile.id == profile.id } + ProviderSecret(profile, replacementKey.orEmpty()) }
+        override fun delete(id: String) { entries = entries.filterNot { it.profile.id == id } }
     }
 
     private fun awaitTag(tag: String) { compose.waitUntil(20_000) { compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty() }; compose.waitForIdle() }

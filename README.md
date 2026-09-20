@@ -3,12 +3,27 @@
 An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.3.2
+## Preview 0.4.0
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
 separate app from the original `com.ruyolidus.ruyo.debug` preview.
 
+- Joined balloons can contain independent text areas. Narrow connections are detected
+  conservatively; review the suggested areas or mark/move their centers manually.
+  Each area has its own translation, font size, and padding. A split through existing
+  lettering is rejected. Saved area boundaries survive reopening.
+- On-device OCR for Latin, Japanese, Chinese, Korean, and Devanagari source scripts.
+  Recognition is confined to the selected area; users can correct the source text.
+- Named AI profiles for OpenAI, OpenAI-compatible APIs (including DeepSeek and
+  compatible local servers), Claude, and Gemini. Each profile has its own model ID,
+  endpoint, and optional server key where supported.
+- API credentials and profile metadata are AES-GCM encrypted with an Android
+  Keystore key in the app's no-backup storage. Calls go directly to the configured
+  endpoint; keys never enter the website or comic storage.
+- Translate a selected area's source text, preview the complete fitted result,
+  and save. Cancellation and edit revision checks prevent late results from
+  overwriting newer work.
 - A compact browser address icon at the top right. Tap to expand and focus the field; successful navigation collapses it again.
 - A persistent default target language and per-edit language choices, including custom language codes. Existing Japanese edits retain their language.
 - Sans serif, serif, condensed, and monospace lettering with bold/italic controls and device script fallback. Exact source-font recognition and custom font-file import are not implemented.
@@ -41,11 +56,14 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
 - Sample grammar/vocabulary lessons and saved sentences, including your own text.
 
-**Translations on your images are entered manually in this build.** The light-bubble
-selector is an assisted editing tool, not OCR or a general bubble segmentation model.
-It is not reliable for every page; inspect the red mask and preview before saving.
-Live AI, API-key profiles, textured-background inpainting, CBZs, and translation
-prefetch are still to be implemented. Website import currently discovers HTTPS
+**Selected-area AI translation is available; automatic translation while scrolling
+is still in development.** The light-bubble selector is an assisted editing tool,
+not a general bubble segmentation model. Inspect the red cleanup mask and preview
+before saving. OCR currently uses the imported working image (up to 6 MP), so very
+small original lettering may still need manual correction. Arbitrary source scripts
+can be entered manually; target language remains configurable with Japanese as default.
+Gradient/textured-background repair, original-resolution tiled OCR, generated
+lessons, CBZs, and translation prefetch remain future work. Website import currently discovers HTTPS
 `img`/common lazy-image URLs from the open page, in document order. Canvas readers,
 iframes, scrambled images, protected downloads, and some custom lazy loaders need
 dedicated source adapters. This does not promise support for every scan site.
@@ -57,6 +75,29 @@ marked in page review. Full-resolution webtoon tiling and OCR against originals
 are future work. This quality increase applies to new imports; existing working images and their edit coordinates remain unchanged. Reimporting creates a separate higher-quality chapter. The app cannot recover original pixels lost by an earlier 0.2
 import. Each image is limited to 40 MB, each import batch to 512 MB, and each
 chapter to 200 images. Unsaved import/editor drafts do not survive process death.
+
+## Try AI translation and joined bubbles
+
+1. In **Settings → Manage AI providers**, add a named profile, choose its API format,
+   and enter the exact model ID, base URL, and your key. Select the active profile.
+   Use **OpenAI compatible** for DeepSeek or a compatible local server.
+2. Open an imported chapter, enable bubble editing, and tap a light enclosed bubble.
+   For joined shapes, review **Text areas**. **Adjust joined bubble areas** also lets
+   you mark centers manually. Use one center to keep a single area.
+3. Choose **Translate with AI → Recognize original text**. Check the source script
+   and correct the recognized text if necessary. Recognition is local; images are
+   not sent to the translation provider.
+4. Choose **Translate to …**, inspect the fitted preview, then **Save**. Return to
+   the reader and tap the next joined part to edit it independently.
+5. To change a saved split after translating, restore the group's translations
+   first. Existing text is never automatically divided between new areas.
+
+Provider calls are explicit, never triggered by opening a chapter or merely saving a
+profile. There are no automatic paid retries. Each request allows up to 4096 output
+tokens, a 128 KiB response, and a 65-second timeout. Provider/model support and pricing
+vary; no live credentials are included in CI. HTTP is restricted to localhost and
+127.0.0.1 for servers on the phone; other endpoints require HTTPS. A local server is
+a separate app/service, not an inference engine bundled into Ruyo.
 
 ## Install a test build
 

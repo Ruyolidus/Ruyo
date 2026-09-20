@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.3.2)
+## Current scope (0.4.0)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -96,37 +96,63 @@ Implementation references: [Android WebView](https://developer.android.com/refer
 and [OpenMultipleDocuments](https://developer.android.com/reference/kotlin/androidx/activity/result/contract/ActivityResultContracts.OpenMultipleDocuments).
 
 Full-resolution long webtoons still need region decoding and a bounded tile cache.
-Do not run future OCR against a downscaled working copy and assume tiny dialogue is
-preserved. The editor currently supports light, flat bubbles and manually entered
+OCR against a downscaled working copy must not imply that tiny dialogue is
+preserved. The editor currently supports light, flat bubbles and manually entered or AI-translated
 translations; source pixels stay intact for reprocessing or restoring a bubble.
 
 See [the browser translation plan](browser-translation.md) for the on-page reading session, original-resolution pipeline, and colored-panel repair work.
 
+## Selected-area translation in 0.4.0
+
+The pipeline now supports a selected light bubble or joined sub-area: bundled ML Kit
+OCR, editable source text, a native provider request, validated translation text,
+and the existing shape-aware fit/preview/save flow. OCR operates on the current
+working image, masked outside the chosen interior, with white border padding. This
+is a bounded first integration, not an original-resolution OCR accuracy claim.
+All five bundled script recognizers are selectable independently of target language.
+Unsupported source scripts can be entered manually.
+
+Joined areas use conservative erosion to suggest distinct lobe centers. Multi-source
+flooding assigns every interior pixel to one center. Areas have disjoint repair/layout
+masks, cropped to their own bounds. Divisions touching source ink are rejected.
+Users can add, move, or remove up to 12 centers. Centers are saved per parent region
+in atomic areas.json files. Translations remain separate existing-format edits.
+Changing a partition with saved translations requires restoring those edits first.
+
+Provider profiles use whole-file AES-256-GCM encryption with an Android Keystore key,
+randomized IVs, and version-bound additional authenticated data. Files live in
+noBackupFilesDir; a decryption failure never silently resets the store. UI summaries
+omit keys, entered keys use ephemeral password state, and changing the endpoint or
+protocol requires key re-entry. Profiles are never exposed to WebView JavaScript.
+
+OpenAI Chat Completions, OpenAI-compatible Chat Completions, Claude Messages, and
+Gemini generateContent have separate serializers and response parsers. Native HTTP
+requests disable redirects, bound response size/time, redact remote errors, and
+disconnect on cancellation. No automatic retries occur. Only selected source text
+and the target tag are sent; source images are not uploaded. Responses must finish
+normally and contain a translation JSON string. Outputs over 512 characters are
+rejected intact rather than truncated. OCR input limit is 2000 source characters.
+
+A separate cancellable job carries editor ID, revision, source text, and generation.
+Returning from profile management preserves the editor; leaving the editor,
+switching profiles, or changing input cancels pending work. Late results cannot
+replace newer edits. OCR native task ownership lasts until completion, including
+its bitmap and single-job mutex, even when the UI request is cancelled.
+
 ## Next stages
 
-1. Extend assisted selection with boundary correction and validate on more permitted
-   comic pages. Current light-bubble selection and erasure-mask correction are implemented.
-2. Add ML Kit Text Recognition as an on-device OCR baseline. It reads explicitly
-   supplied images; it does not capture or translate the screen automatically.
-   Bubble segmentation and glyph masks remain separate components.
-3. Implement native credential storage backed by Android Keystore and a first
-   provider adapter. Only then expose API-key entry. Never store keys in ordinary
-   preferences, exported state, logs, or source control.
-4. Translate ordered dialogue batches with context. Require one result per bubble
-   ID, validate structured responses, and cache by source and translation revision.
-5. Add a bounded scheduler that prepares upcoming regions before they enter the
-   viewport. Prioritize selected and visible bubbles. Measure latency and memory
-   on modest Android hardware; never tie expensive work to a scroll callback.
-6. Add tutor requests bound to the exact Japanese revision displayed. Keep
-   translation and lesson providers independently selectable. Clearly distinguish
-   original Japanese from AI-translated Japanese and estimated JLPT associations.
-7. Add Claude, Gemini, DeepSeek, OpenAI-compatible endpoints, and user-hosted
-   local models via capability-aware adapters. On-phone model inference is a
-   distinct implementation requiring model, memory, and battery evaluation.
-8. Add CBZ import and dedicated adapters for permitted source sites that the new
-   generic web importer cannot handle. Extend full-resolution tiled reading.
-9. Evaluate gradient and textured-background inpainting. Preserve source pixels
-   whenever segmentation, repair, or fit validation cannot produce a reliable result.
+1. Decode OCR regions and visible reader tiles from archived originals. Measure
+   tiny-letter recognition and memory on modest Android phones.
+2. Add ordered dialogue batches with neighboring context, region IDs, validated
+   per-region responses, and persistent revision-aware caches.
+3. Add a bounded viewport scheduler and native overlays for in-browser reading.
+   Reuse the tested per-region pipeline without sending keys into page scripts.
+4. Generate language-aware grammar/vocabulary lessons bound to the displayed
+   translation revision. Keep lesson and translation profiles independently selectable.
+5. Add manual narration regions and gradient/textured-background repair with
+   explicit quality checks, plus licensed custom font import.
+6. Extend local import with CBZs and permitted source adapters. On-phone inference
+   remains separate from connecting to a local model server.
 
 ## Testing strategy
 

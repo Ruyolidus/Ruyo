@@ -1,6 +1,6 @@
 # Browser translation and the next implementation stage
 
-Status: implementation plan, not a claim that live translation exists in 0.3.2.
+Status: live browser translation remains planned. Version 0.4.0 implements selected-area OCR, secure provider profiles, AI translation, and independent joined-bubble areas in the imported-image editor.
 
 ## Reader behavior
 
@@ -121,8 +121,9 @@ they are using.
 
 ## Delivery gates
 
-The next functional milestone is original-region decoding, OCR with correction,
-secure provider profiles, and a real end-to-end **Translate this region** action.
+The selected-region OCR/correction, encrypted profiles, and translation action are
+implemented in 0.4.0. Recognition currently uses the bounded working image.
+The next milestone is original-region decoding and a browser viewport scheduler.
 Then connect ordered batches and viewport scheduling to local chapters, followed
 by opt-in browser sessions using the same pipeline. Add generated study lessons
 only after requests can be tied to a displayed translation revision; label
