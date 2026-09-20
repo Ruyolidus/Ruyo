@@ -273,7 +273,13 @@ class AppFlowTest {
         compose.onNodeWithTag("add-provider").performScrollTo().performClick()
         awaitTag("provider-form")
         capture("provider-form")
+        compose.onNodeWithTag("provider-name").performScrollTo().performTextInput("Invalid address")
+        compose.onNodeWithTag("provider-model").performScrollTo().performTextInput("test-model")
+        compose.onNodeWithTag("provider-endpoint").performScrollTo().performTextReplacement("http://example.com/v1")
+        compose.onNodeWithTag("save-provider").performScrollTo().performClick()
+        awaitState { model.profileError != null && !model.busy }
         compose.onNodeWithText("Cancel").performScrollTo().performClick()
+        compose.onNodeWithTag("add-provider").assertIsEnabled()
         compose.onNodeWithContentDescription("Back").performClick()
         awaitTag("bubble-editor")
         assertEquals(editId, model.draft!!.edit.id)
@@ -316,7 +322,7 @@ class AppFlowTest {
         private var entries = listOf(ProviderSecret(ProviderProfile(name = "Test profile", kind = ProviderKind.OPENAI, baseUrl = "https://api.openai.com/v1", model = "test-model", hasKey = true), "fixture-only"))
         override fun list() = entries.map { it.profile }
         override fun get(id: String) = entries.first { it.profile.id == id }
-        override fun save(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean) { entries = entries.filterNot { it.profile.id == profile.id } + ProviderSecret(profile, replacementKey.orEmpty()) }
+        override fun save(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean) { profile.validate(); entries = entries.filterNot { it.profile.id == profile.id } + ProviderSecret(profile, replacementKey.orEmpty()) }
         override fun delete(id: String) { entries = entries.filterNot { it.profile.id == id } }
     }
 

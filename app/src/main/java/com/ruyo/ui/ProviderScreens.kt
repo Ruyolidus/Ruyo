@@ -48,7 +48,7 @@ internal fun ProviderProfilesScreen(model: RuyoModel) {
                 }
             }
         }
-        item { Button(onClick = { creating = true }, enabled = !model.busy && model.profileError == null, modifier = Modifier.fillMaxWidth().testTag("add-provider")) { Text("Add provider") } }
+        item { Button(onClick = { creating = true }, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("add-provider")) { Text("Add provider") } }
         item { Text("OpenAI, DeepSeek and other compatible APIs, Claude, Gemini, and local compatible servers are supported. Model access and charges depend on your provider account.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
     }
     removing?.let { profile ->
