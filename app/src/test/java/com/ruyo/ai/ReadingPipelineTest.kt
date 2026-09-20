@@ -75,6 +75,17 @@ class ReadingPipelineTest {
         } finally { source.recycle() }
     }
 
+    @Test fun missedSourceLineDoesNotGetErasedWithRecognizedText() = runBlocking {
+        val (source, lines) = fixture()
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 18f; textAlign = Paint.Align.CENTER }
+        Canvas(source).drawText("Missed line", 110f, 151f, paint)
+        try {
+            val detected = AutoBubbleDetector.detect(source, lines).flatMap { it.bubbles }
+            assertFalse(detected.any { it.source == "Part one" })
+            assertTrue(detected.any { it.source == "Part two" })
+        } finally { source.recycle() }
+    }
+
     @Test fun webImagesLoadOnceAndStayOutOfTheLibrary() = runBlocking {
         val (bitmap, _) = fixture()
         val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()

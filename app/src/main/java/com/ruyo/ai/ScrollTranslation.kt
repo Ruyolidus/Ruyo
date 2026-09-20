@@ -74,6 +74,7 @@ class PageTranslationPipeline(
     private val profiles: ProfileStore,
     private val translate: TranslationService,
 ) {
+    private val unfitted = mutableSetOf<String>()
     suspend fun process(page: OpenBook, settings: TranslationSettings, keepGoing: () -> Boolean, status: (String) -> Unit,
         changed: suspend () -> Unit): String? {
         if (!keepGoing()) return null
@@ -96,6 +97,9 @@ class PageTranslationPipeline(
                 if (!keepGoing()) return null
                 if (existing.any { it.region.overlaps(bubble.region) }) continue
                 if (existing.size >= 40) { skipped++; continue }
+                val attempt = listOf(page.book.id, page.page.id, bubble.region.left, bubble.region.top, bubble.region.width, bubble.region.height,
+                    settings.profileId, settings.language, bubble.source).joinToString("|")
+                if (attempt in unfitted) { skipped++; continue }
                 val sourceHeight = withContext(Dispatchers.Default) { SourceLettering.estimateHeight(bubble.region) }
                 status("Translating dialogue " + (count + 1) + "…")
                 val text = translate.translate(secret, bubble.source, settings.language)
@@ -108,7 +112,7 @@ class PageTranslationPipeline(
                         preview.crop.recycle(); preview.fit.ink.recycle(); true
                     }, onFailure = { false })
                 }
-                if (!fits) { skipped++; continue }
+                if (!fits) { unfitted += attempt; skipped++; continue }
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) { store.saveEdit(page.book.id, page.original, edit, page.page.id) }
                 existing += edit; count++
@@ -116,7 +120,7 @@ class PageTranslationPipeline(
             }
         }
         return when {
-            groups.isEmpty() -> "No supported dialogue bubbles found. Tap a bubble to edit."
+            groups.all { it.bubbles.isEmpty() } -> "No supported dialogue bubbles found. Tap a bubble to edit."
             skipped > 0 -> "Saved " + count + " translations · " + skipped + " areas need manual editing"
             else -> "Dialogue ready · Tap a bubble to edit"
         }

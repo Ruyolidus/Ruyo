@@ -94,21 +94,22 @@ jobs:
           This build adds multi-image chapters, page ordering and append, saved
           reading position, an in-app HTTPS browser, and website image imports.
           Use Add comic to select multiple files, or Browse to open a chapter link.
-          Find images downloads selected pages for thumbnail/order review.
+          Import downloads selected pages for thumbnail/order review. Read opens a temporary in-app reading session.
           Tap the top-right address icon to expand or collapse the browser field.
           Bubble editing supports target languages, font styles, and estimated source size.
           New imports retain up to 6 MP; recognized comment images are excluded by default.
           Repeated-preview, complete-text, and multilingual shaping checks are included.
           Joined bubble parts now have independent text areas, with manual center adjustment.
-          In the editor, use Translate with AI to recognize source text and translate it.
+          Opening a new bubble automatically recognizes, translates, and previews it with the active profile.
           Add profiles in Settings > Manage AI providers. Keys are encrypted on-device.
-          Live scrolling translation and generated lessons remain in development.
+          Use Translate in local or website reading mode to process nearby images as you scroll.
+          Tap web dialogue to edit it. Generated lessons remain in development.
 
           Ruyo-checks includes native renderer tests and actual app-screen PNGs.
 
           The runner generates a debug signing key. A later build may have a different
           signing identity. If Android refuses an update, uninstall the earlier preview
-          first; this removes its locally saved chapters, edits, and sentences. Persistent private signing comes later.
+          first; this removes its locally saved chapters, edits, sentences, and provider profiles. Persistent private signing comes later.
           SUMMARY
 
   device:

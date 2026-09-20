@@ -87,7 +87,6 @@ internal fun BookReader(model: RuyoModel) {
             itemsIndexed(book.pages, key = { _, page -> page.id }) { index, page ->
                 var retry by remember(page.id) { mutableIntStateOf(0) }
                 val loaded by produceState<Result<OpenBook>?>(null, book.id, page.id, model.pageRevision, retry) {
-                    value = null
                     value = try { Result.success(model.pageLoader.load(book, page)) }
                     catch (error: CancellationException) { throw error }
                     catch (error: Exception) { Result.failure(error) }

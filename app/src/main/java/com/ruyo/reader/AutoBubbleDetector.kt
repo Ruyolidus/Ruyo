@@ -34,7 +34,18 @@ object AutoBubbleDetector {
                         region.contains(line.x, line.top) && region.contains(line.x, line.bottom - 1)
                 }
                 val text = assigned.joinToString("\n") { it.text }
-                if (!whole || text.isBlank() || text.length > 2000 || region.eraseMask.none { it }) null else DetectedBubble(region, text)
+                val ink = region.eraseMask.count { it }
+                var uncovered = 0
+                for (i in region.eraseMask.indices) if (region.eraseMask[i]) {
+                    val x = region.left + i % region.width; val y = region.top + i / region.width
+                    if (assigned.none { line ->
+                        val halo = maxOf(3, (line.bottom - line.top) / 5)
+                        x in (line.left - halo)..(line.right + halo) && y in (line.top - halo)..(line.bottom + halo)
+                    }) uncovered++
+                }
+                // Missing OCR lines must not be erased along with recognized neighbors.
+                val covered = uncovered <= maxOf(6, ink / 50)
+                if (!covered || !whole || text.isBlank() || text.length > 2000 || region.eraseMask.none { it }) null else DetectedBubble(region, text)
             }
             DetectedGroup(parent, centers, bubbles)
         }

@@ -10,7 +10,7 @@ this exact application ID too; there is no `.debug` suffix. This installs as a
 separate app from the original `com.ruyolidus.ruyo.debug` preview.
 
 - Joined balloons can contain independent text areas. Narrow connections are detected
-  conservatively; review the suggested areas or mark/move their centers manually.
+  conservatively; valid areas open directly, with optional center adjustment.
   Each area has its own translation, font size, and padding. A split through existing
   lettering is rejected. Saved area boundaries survive reopening.
 - On-device OCR for Latin, Japanese, Chinese, Korean, and Devanagari source scripts.
@@ -21,9 +21,16 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 - API credentials and profile metadata are AES-GCM encrypted with an Android
   Keystore key in the app's no-backup storage. Calls go directly to the configured
   endpoint; keys never enter the website or comic storage.
-- Translate a selected area's source text, preview the complete fitted result,
-  and save. Cancellation and edit revision checks prevent late results from
-  overwriting newer work.
+- Opening an untranslated bubble automatically recognizes its source text, translates
+  it with the active profile, and shows the fitted preview. Source correction and
+  provider controls are optional. Saved translations open for revision without another
+  provider request. Cancellation and edit revision checks reject late results.
+- Translation while scrolling in both imported chapters and website reading mode:
+  one native worker processes visible images and one ahead, saves validated swaps,
+  and skips completed dialogue on revisits. Start/Pause is explicit for each session.
+- Website **Read** opens discovered chapter images directly in a temporary native
+  reader inside the app. Tap a bubble to use the same automatic editor, then return
+  to the same reading position. No library import is required.
 - A compact browser address icon at the top right. Tap to expand and focus the field; successful navigation collapses it again.
 - A persistent default target language and per-edit language choices, including custom language codes. Existing Japanese edits retain their language.
 - Sans serif, serif, condensed, and monospace lettering with bold/italic controls and device script fallback. Exact source-font recognition and custom font-file import are not implemented.
@@ -36,7 +43,8 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 - A continuous reader with saved page/scroll position, serialized loading, and a
   bounded cache of nearby pages. Library search, filters, and thumbnails remain.
 - An in-app HTTPS browser: paste a chapter link, browse and scroll to load lazy
-  images, tap **Find images**, select pages, download, review their order, then save.
+  images, tap **Import**, select pages, download, review their order, then save.
+  **Read** starts a temporary reading session instead.
 - The browser address field has a persistent filled background and visible outline in both themes. Image discovery separates recognized comment/profile images and images outside known reader containers; these are not selected by default. A manual toggle keeps them available if a site is misclassified. Responsive image sets prefer their largest declared source.
 - Import progress, cancellation, and per-image failures. Partial successful imports
   are shown for review; they are never silently saved as complete chapters.
@@ -56,18 +64,30 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
 - Sample grammar/vocabulary lessons and saved sentences, including your own text.
 
-**Selected-area AI translation is available; automatic translation while scrolling
-is still in development.** The light-bubble selector is an assisted editing tool,
-not a general bubble segmentation model. Inspect the red cleanup mask and preview
-before saving. OCR currently uses the imported working image (up to 6 MP), so very
-small original lettering may still need manual correction. Arbitrary source scripts
-can be entered manually; target language remains configurable with Japanese as default.
-Gradient/textured-background repair, original-resolution tiled OCR, generated
-lessons, CBZs, and translation prefetch remain future work. Website import currently discovers HTTPS
-`img`/common lazy-image URLs from the open page, in document order. Canvas readers,
-iframes, scrambled images, protected downloads, and some custom lazy loaders need
-dedicated source adapters. This does not promise support for every scan site.
-Use pages you have permission to save; access restrictions are not bypassed.
+**Automatic translation is a first preview for enclosed, light, flat dialogue bubbles.**
+The source-script OCR model must match the comic. Detection uses OCR line positions
+and the conservative bubble selector, including independent parts of joined balloons.
+A line crossing a region boundary or an incomplete OCR footprint is left for manual
+editing. Fitting failures keep the original pixels; text is never silently shortened.
+
+Website reading mode uses the current page's HTTPS image URLs in document order.
+It is an in-app native reading view, not replacement inside the website's HTML.
+Scroll the website to expose lazy-loaded images before choosing Read. Comments and
+profile images recognized by the collector are excluded. Canvas readers, iframes,
+scrambled images, protected downloads, and some lazy loaders need source adapters.
+This does not promise support for every scan site. Access restrictions are not bypassed.
+
+Browser sessions have a 512 MB temporary cache. Edits survive returning to the
+website and reopening Read for the same discovered chapter while the app is alive.
+Starting another web chapter, clearing browsing data, cache removal, or process
+death may lose this temporary session. Import pages for durable offline chapters.
+
+Recognition uses the bounded working image (up to 6 MP), so tiny original lettering
+can still need correction. Latin, Japanese, Chinese, Korean, and Devanagari OCR are
+bundled; other source scripts can be typed manually. Target language is configurable,
+with Japanese as default. Gradient/narration repair, text over artwork,
+original-resolution tiling, custom font import, generated lessons, and CBZs remain
+future work. No opaque rectangular covers are used as a fallback.
 
 New imports retain original image bytes in private storage plus bounded working
 copies (up to 6 megapixels / 8192 pixels per dimension). Large working copies are
@@ -81,19 +101,25 @@ chapter to 200 images. Unsaved import/editor drafts do not survive process death
 1. In **Settings → Manage AI providers**, add a named profile, choose its API format,
    and enter the exact model ID, base URL, and your key. Select the active profile.
    Use **OpenAI compatible** for DeepSeek or a compatible local server.
-2. Open an imported chapter, enable bubble editing, and tap a light enclosed bubble.
-   For joined shapes, review **Text areas**. **Adjust joined bubble areas** also lets
-   you mark centers manually. Use one center to keep a single area.
-3. Choose **Translate with AI → Recognize original text**. Check the source script
-   and correct the recognized text if necessary. Recognition is local; images are
-   not sent to the translation provider.
-4. Choose **Translate to …**, inspect the fitted preview, then **Save**. Return to
-   the reader and tap the next joined part to edit it independently.
-5. To change a saved split after translating, restore the group's translations
-   first. Existing text is never automatically divided between new areas.
+2. Open an imported chapter and tap its pencil, or open a website and choose **Read**.
+   Tap a light enclosed bubble. Recognition, translation, and the fitted preview
+   start automatically when a provider is selected.
+3. Inspect the preview and optionally change text, font, bold/italic, size, or padding.
+   **Source and provider** reveals recognition correction, source script, and retry.
+   Choose **Save** to return to the same reader.
+4. For joined bubbles, each detected lobe has its own translation. **Adjust joined
+   bubble areas** allows center correction; restore that group's saved translations
+   before changing an existing partition.
+5. In either reader, tap **Translate** once to translate as you scroll. The settings
+   icon selects source script, target language, and provider. The original remains
+   readable while a result is pending. **Pause**, opening an editor, leaving the reader,
+   or backgrounding the app stops the worker. Tap Translate to resume after editing.
 
-Provider calls are explicit, never triggered by opening a chapter or merely saving a
-profile. There are no automatic paid retries. Each request allows up to 4096 output
+Opening a website or chapter alone never sends a paid request. Opening a new bubble
+with an active profile does, as does starting Translate in the reader. Only recognized
+text is sent to the native provider client; comic images and keys never enter each
+other's storage or the WebView. Failed requests stop automatic processing until an
+explicit retry. There are no automatic paid retries. Each request allows up to 4096 output
 tokens, a 128 KiB response, and a 65-second timeout. Provider/model support and pricing
 vary; no live credentials are included in CI. HTTP is restricted to localhost and
 127.0.0.1 for servers on the phone; other endpoints require HTTPS. A local server is
@@ -113,7 +139,7 @@ are retained for seven days. Runs use the repository owner's GitHub Actions quot
 The preview package is `com.ruyo`. Android generates a debug signing
 key on each fresh build runner. If a later APK cannot update an existing preview,
 uninstall the earlier preview first; this removes its locally saved chapters, edits,
-and sentences. Persistent
+sentences, and provider profiles. Persistent
 private test signing and production signing will be configured separately. No
 signing key is stored in this repository.
 
@@ -164,7 +190,8 @@ app's interaction and performance on an actual phone.
 | `reader` | Pixel masks, horizontal fitting, and flat-bubble repair |
 | `sample` | Original sample artwork and explicit prewritten learning data |
 | `importer` | Multiple-document decoding and natural filename sorting |
-| `web` | HTTPS URL policy, DOM image discovery, bounded image downloads |
+| `web` | HTTPS URL policy, DOM image discovery, bounded downloads and temporary sessions |
+| `ai` | Bundled OCR, encrypted profiles, provider transports, and scroll scheduling |
 | `data` | Ordered chapters, original files, masks, edits, progress, and saved sentences |
 | `ui` | Library, reader, chapter review, browser, editor, lessons, and themes |
 

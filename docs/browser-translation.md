@@ -1,20 +1,45 @@
-# Browser translation and the next implementation stage
+# Browser translation: implemented preview and next stages
 
-Status: live browser translation remains planned. Version 0.4.0 implements selected-area OCR, secure provider profiles, AI translation, and independent joined-bubble areas in the imported-image editor.
+Status: version 0.4.0 implements automatic editor recognition/translation/preview,
+secure provider profiles, independent joined-bubble areas, and translation as you
+scroll in local chapters and an in-app website reading mode. Direct replacement
+inside website HTML remains future work.
 
-## Reader behavior
+## Current reader behavior
 
-A user opens a chapter in Ruyo's browser and turns on **Translate** for that reading
-session. Chapter images are processed as they approach the viewport. Finished
-Japanese lettering replaces the source lettering in the displayed chapter image;
-it remains horizontal and inside the permitted text region. Original/Japanese and
-Pause controls remain native app controls. Tapping translated dialogue opens a
-lesson tied to that exact translation revision.
+Open a chapter in Ruyo's HTTPS browser, expose any lazy images by scrolling, and
+choose **Read**. This enters a native reading view inside the app without importing
+the chapter into the library. The collapsed address control remains in the browser.
+The reading view shows Original/Translated, compact translation controls, and the
+chapter images. Tap any supported bubble to open the automatic editor; Save returns
+to the stored page/offset. Existing text, serif/sans/condensed/monospace, bold/italic,
+size, padding, and cleanup corrections use the same editor as local pages.
 
-This session does not require adding the chapter to the library. Reading uses a
-bounded temporary image/translation cache; **Save chapter** is an optional offline
-action. The local image importer remains a separate entry point to the same
-pipeline. Browsing alone never starts paid model requests.
+**Translate** starts a single worker for visible images (up to three) and one image
+ahead. A visibility change reprioritizes subsequent work without restarting the
+current provider call. Completed edits are persisted in the session store and reused.
+The worker pauses on failure, edit, navigation, profile/script/language change, and
+app backgrounding. Resuming is explicit. A failed fit keeps the original and is not
+retried for every scroll event. Opening a bubble automatically recognizes/translates
+when a profile is selected; saved text is previewed without calling a provider.
+
+The temporary store is isolated under the app cache, limited to 512 MB per session
+and 40 MB per source image. Reopening Read for the same discovered image list retains
+its session while the model is alive. Process death, clearing browsing data, or a new
+web chapter can discard it. The regular **Import** action is the durable offline path.
+The decoded page cache is bounded by count/bytes; displayed frames and active OCR
+buffers additionally contribute to peak memory.
+
+Automatic selection uses ML Kit line bounds and the existing enclosed-flat-light
+bubble selector. Joined regions use saved/suggested centers. Every source line must
+belong to a part, and its OCR footprint must cover the detected lettering before a
+swap is attempted. Saved regions cannot be overlapped. Provider text passes the full
+fitter and raster containment check before it is composed. Unsupported backgrounds
+stay unchanged. API calls are sequential, so network latency remains visible when
+scrolling faster than the provider responds.
+
+Generated study lessons and same-DOM website image replacement are not implemented.
+The following sections describe remaining extensions and their acceptance criteria.
 
 ## Image quality comes before OCR
 
@@ -86,7 +111,7 @@ provider. Parse and validate results by expected region IDs. Reject missing,
 duplicated, unknown, or malformed results; keep valid neighboring regions usable.
 Do not request a shorter translation silently to compensate for failed lettering.
 
-## Scroll scheduling and on-page display
+## Future direct HTML display and richer caching
 
 1. A source adapter discovers the chapter container and stable image identities.
    Comments, avatars, advertisements, and navigation images are not translation
@@ -121,22 +146,19 @@ they are using.
 
 ## Delivery gates
 
-The selected-region OCR/correction, encrypted profiles, and translation action are
-implemented in 0.4.0. Recognition currently uses the bounded working image.
-The next milestone is original-region decoding and a browser viewport scheduler.
-Then connect ordered batches and viewport scheduling to local chapters, followed
-by opt-in browser sessions using the same pipeline. Add generated study lessons
-only after requests can be tied to a displayed translation revision; label
-approximate JLPT associations and AI-generated Japanese as such.
+CI exercises automatic editor entry, late-response rejection, joined-area ownership,
+native text fitting, Web reading without library imports, repeated image-load
+coalescing, saved edit reuse, viewport priority, pause/error behavior, and browser
+edit/return position. Android instrumentation exercises bundled OCR line positions,
+selected-area recognition, Keystore persistence, and the production ViewModel factory.
+Provider transport tests use fixtures and never contain real credentials.
 
-Before enabling automatic browser swapping, test Android 12 on modest hardware,
-long strips and zoom, tiny dialogue, smooth narration panels, source transitions,
-lazy image replacement, comment filtering, navigation cancellation, malformed
-provider output, rate limits, offline retries, and exact source restoration. No
-real user's key is required in CI: transport fixtures and injected credentials
-exercise request routing and persistence; live-provider smoke testing uses an
-explicitly configured test profile and never publishes its secret.
-
+Physical-device latency/memory checks and live-provider compatibility still need
+real-world testing. Current screenshots are generated by Compose tests; their
+existence is not a substitute for visual review. Original-resolution tiling,
+gradient narration repair, custom fonts, and revision-linked generated lessons are
+the next substantial capabilities. Direct HTML replacement additionally needs
+site-specific lazy-loader and image-identity validation.
 
 ## Language and source-style matching
 
