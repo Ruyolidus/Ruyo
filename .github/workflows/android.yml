@@ -126,6 +126,10 @@ jobs:
       - uses: android-actions/setup-android@v4
         with:
           packages: ''
+      - name: Free space for emulator userdata
+        run: |
+          sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: Install compile SDK
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
       - name: Enable emulator acceleration

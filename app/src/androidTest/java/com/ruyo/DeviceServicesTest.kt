@@ -54,6 +54,10 @@ class DeviceServicesTest {
             assertTrue(recognized, recognized.lowercase().contains("comic"))
             assertTrue(recognized, recognized.lowercase().contains("dialogue"))
             assertFalse(recognized.lowercase().contains("neighbor"))
+            val lines = withTimeout(60_000) { BubbleOcr().lines(source, OcrScript.LATIN) }
+            assertTrue(lines.any { it.text.lowercase().contains("dialogue") && it.y < 155 })
+            assertTrue(lines.any { it.text.lowercase().contains("neighbor") && it.top > 155 })
+            assertTrue(lines.all { it.right > it.left && it.bottom > it.top })
         } finally { source.recycle() }
     }
 

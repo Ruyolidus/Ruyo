@@ -18,6 +18,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         model.flushPosition()
+        model.pauseScrolling()
         super.onStop()
     }
 }

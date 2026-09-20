@@ -35,6 +35,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private val profileStore: ProfileStore = EncryptedProfileStore(application),
     private val ocrService: OcrService = BubbleOcr(),
     private val translationService: TranslationService = TranslationClient(),
+    private val webSessionFactory: (Application, WebChapter, Map<String, String>, String) -> WebReadingSession = { app, source, cookies, agent -> WebReadingSession(app, source, cookies, agent) },
 ) : AndroidViewModel(application) {
     val store = LocalBookStore(application)
     val pageLoader = ReaderPageLoader(store)
@@ -96,7 +97,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         }
         webReading?.close()
         withContext(Dispatchers.IO) { WebReadingSession.clearAbandoned(getApplication()) }
-        val session = WebReadingSession(getApplication(), source, cookies, userAgent)
+        val session = webSessionFactory(getApplication(), source, cookies, userAgent)
         webReading = session; webPosition = 0 to 0; editorWebIndex = null
         route = "webread"; japanese = true; selectionError = null
         configureScroll(session.store, source.images.size, { session.load(it) }, { session.changed() })

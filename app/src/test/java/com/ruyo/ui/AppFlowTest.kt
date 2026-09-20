@@ -324,6 +324,71 @@ class AppFlowTest {
         assertNull(model.draft)
     }
 
+    @Test fun websiteReadingCanEditImmediatelyAndTranslateAheadWithoutImporting() {
+        val source = android.graphics.Bitmap.createBitmap(600, 1100, android.graphics.Bitmap.Config.ARGB_8888)
+        source.eraseColor(android.graphics.Color.rgb(35, 45, 60))
+        android.graphics.Canvas(source).apply {
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+            paint.color = android.graphics.Color.WHITE
+            drawOval(130f, 40f, 470f, 320f, paint)
+            paint.color = android.graphics.Color.BLACK; paint.textSize = 38f; paint.textAlign = android.graphics.Paint.Align.CENTER
+            drawText("Wait!", 300f, 180f, paint)
+        }
+        val encoded = java.io.ByteArrayOutputStream().also { source.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        var calls = 0
+        val ocr = object : OcrService {
+            override suspend fun recognize(source: android.graphics.Bitmap, region: com.ruyo.reader.BubbleRegion, script: OcrScript) = "Wait!"
+            override suspend fun lines(source: android.graphics.Bitmap, script: OcrScript) = listOf(OcrLine("Wait!", 250, 143, 350, 185))
+        }
+        val model = RuyoModel(context, TestProfiles(), ocr, TranslationService { _, _, _ -> calls++; "待って！" },
+            webSessionFactory = { app, chapter, cookies, agent ->
+                com.ruyo.web.WebReadingSession(app, chapter, cookies, agent) { _, check -> check(); java.io.ByteArrayInputStream(encoded) }
+            })
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        val chapter = WebChapter("https://example.com/chapter", "Website fixture",
+            (0..2).map { WebImage("https://example.com/image-" + it + ".png", "Image " + it, 600, 1100) })
+        compose.runOnIdle { model.readWebsite(chapter, emptyMap(), "Fixture") }
+        awaitTag("web-page-0")
+        assertEquals(0, calls)
+        assertTrue(LocalBookStore(context).list().isEmpty())
+        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, height * .164f)) }
+        awaitTag("bubble-editor")
+        awaitState { model.draft?.preview != null && !model.busy && model.aiStatus == null }
+        assertEquals(1, calls)
+        compose.runOnIdle { model.changeFont("serif") }
+        awaitState { model.draft?.preview != null && !model.busy }
+        compose.runOnIdle { model.changeBold(true) }
+        awaitState { model.draft?.preview != null && !model.busy }
+        assertTrue(model.draft!!.edit.bold)
+        compose.onNodeWithTag("save-edit").performClick()
+        awaitTag("web-reader")
+        awaitState { !model.busy }
+        compose.onNodeWithTag("scroll-translate").performClick()
+        awaitState { model.scrollTranslation?.notes?.keys?.containsAll(listOf(0, 1)) == true }
+        assertEquals(2, calls)
+        compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(2)
+        awaitState { model.scrollTranslation?.notes?.containsKey(2) == true }
+        assertEquals(3, calls)
+        compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(0)
+        awaitState { model.webPosition.first == 0 }
+        capture("web-reader-translated")
+        assertEquals(3, calls)
+        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, height * .164f)) }
+        awaitTag("bubble-editor")
+        awaitState { model.draft?.preview != null && !model.busy }
+        assertTrue(model.draft!!.existing)
+        assertEquals("serif", model.draft!!.edit.fontFamily)
+        assertTrue(model.draft!!.edit.bold)
+        assertEquals(3, calls)
+        compose.runOnIdle { model.cancelEditor() }
+        awaitTag("web-reader")
+        assertEquals(0, model.webPosition.first)
+        assertTrue(LocalBookStore(context).list().isEmpty())
+        compose.runOnIdle { model.home() }
+        source.recycle()
+    }
+
     private class TestProfiles : ProfileStore {
         private var entries = listOf(ProviderSecret(ProviderProfile(name = "Test profile", kind = ProviderKind.OPENAI, baseUrl = "https://api.openai.com/v1", model = "test-model", hasKey = true), "fixture-only"))
         override fun list() = entries.map { it.profile }
