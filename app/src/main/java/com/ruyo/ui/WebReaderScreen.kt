@@ -86,6 +86,7 @@ internal fun WebReaderScreen(model: RuyoModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier = Modifier) {
+    if (model.route == "book") { ChapterReaderTools(model, modifier); return }
     val translation = model.scrollTranslation ?: return
     var settings by rememberSaveable { mutableStateOf(false) }
     Surface(modifier, shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
@@ -142,6 +143,30 @@ internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier 
                 else OutlinedButton(onClick = { settings = false; model.toggleSelection() }, modifier = Modifier.fillMaxWidth()) { Text(if (model.selecting) "Finish editing bubbles" else "Edit bubbles") }
                 TextButton(onClick = { settings = false; model.home() }, modifier = Modifier.fillMaxWidth()) { Text("Library") }
             }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChapterReaderTools(model: RuyoModel, modifier: Modifier) {
+    var settings by rememberSaveable { mutableStateOf(false) }
+    Surface(modifier, shape = androidx.compose.foundation.shape.CircleShape, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
+        IconButton(onClick = { settings = true }, modifier = Modifier.testTag("reading-translation-settings")) { Icon(AppIcons.Settings, "Reading controls", Modifier.size(21.dp)) }
+    }
+    if (settings) ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("Reading controls", style = MaterialTheme.typography.titleLarge)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Hide title bar", Modifier.weight(1f))
+                Switch(model.readerImmersive, { model.readerImmersive = it })
+            }
+            LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy, tag = "reading-language")
+            Text("Preparation fills untranslated supported dialogue. Your saved edits are kept.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { settings = false; model.startPreparation() }, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("prepare-chapter")) { Text("Prepare whole chapter") }
+            OutlinedButton(onClick = { settings = false; model.toggleSelection() }, modifier = Modifier.fillMaxWidth()) { Text("Edit bubbles") }
+            TextButton(onClick = { settings = false; model.editProfiles() }) { Text(model.activeProfile?.name ?: "Choose AI provider") }
+            Text("Tap translated dialogue to study. Original and Translated stay available in the reader.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

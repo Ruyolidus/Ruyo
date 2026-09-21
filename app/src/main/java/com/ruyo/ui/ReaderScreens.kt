@@ -76,6 +76,10 @@ internal fun BookReader(model: RuyoModel) {
     DisposableEffect(book.id) { onDispose { model.flushPosition(); model.pauseScrolling() } }
     Box(Modifier.fillMaxSize().testTag("book-reader")) {
       Column(Modifier.fillMaxSize()) {
+        ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}", "Translated",
+            navigation = model.seriesFor(book.id) != null,
+            previous = model.neighbor(-1)?.let { previous -> ({ model.openBook(previous) }) },
+            next = model.neighbor(1)?.let { next -> ({ model.openBook(next) }) })
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("Tap inside a plain, light bubble. Pinch to reach small dialogue.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
@@ -112,13 +116,17 @@ internal fun BookReader(model: RuyoModel) {
 }
 
 @Composable
-internal fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, detail: String, translatedLabel: String = "Japanese") {
+internal fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, detail: String, translatedLabel: String = "Japanese", navigation: Boolean = false, previous: (() -> Unit)? = null, next: (() -> Unit)? = null) {
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             TextButton(onClick = { onLanguage(false) }, modifier = Modifier.testTag("show-original"), colors = ButtonDefaults.textButtonColors(contentColor = if (!japanese) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)) { Text("Original", fontWeight = if (!japanese) FontWeight.SemiBold else FontWeight.Normal) }
             TextButton(onClick = { onLanguage(true) }, modifier = Modifier.testTag("show-japanese"), colors = ButtonDefaults.textButtonColors(contentColor = if (japanese) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)) { Text(translatedLabel, fontWeight = if (japanese) FontWeight.SemiBold else FontWeight.Normal) }
             Spacer(Modifier.weight(1f))
-            Text(detail, Modifier.padding(end = 8.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(detail, Modifier.padding(end = 4.dp), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (navigation) {
+                IconButton(onClick = { previous?.invoke() }, enabled = previous != null, modifier = Modifier.size(40.dp).testTag("previous-chapter")) { Icon(AppIcons.Back, "Previous chapter", Modifier.size(18.dp)) }
+                IconButton(onClick = { next?.invoke() }, enabled = next != null, modifier = Modifier.size(40.dp).testTag("next-chapter")) { Icon(AppIcons.Next, "Next chapter", Modifier.size(18.dp)) }
+            }
         }
     }
 }

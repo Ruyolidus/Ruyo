@@ -59,12 +59,13 @@ private fun AppContent(model: RuyoModel) {
     val snackbars = remember { SnackbarHostState() }
     var pickerTarget by remember { mutableStateOf<String?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) model.importImages(uris, pickerTarget)
+        if (uris.isNotEmpty()) model.importFiles(uris, pickerTarget)
         pickerTarget = null
     }
     var addComic by remember { mutableStateOf(false) }
+    var newSeries by remember { mutableStateOf(false) }
     var discardImport by remember { mutableStateOf(false) }
-    fun pickImages(appendTo: String? = null) { pickerTarget = appendTo; picker.launch(arrayOf("image/*")) }
+    fun pickImages(appendTo: String? = null) { pickerTarget = appendTo; picker.launch(arrayOf("image/*", "application/pdf", "application/x-cbz", "application/vnd.comicbook+zip", "application/zip")) }
     var discard by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf<LocalBook?>(null) }
     fun back() {
@@ -74,6 +75,8 @@ private fun AppContent(model: RuyoModel) {
             "profiles" -> model.closeProfiles()
             "import" -> discardImport = true
             "pages" -> model.reader()
+            "book" -> model.leaveReader()
+            "prepare" -> model.finishPreparation()
             "webread" -> model.returnToWebsite()
             else -> model.home()
         }
@@ -98,6 +101,8 @@ private fun AppContent(model: RuyoModel) {
                         "sample" -> "Before the rain"
                         "book" -> model.chapter?.title.orEmpty()
                         "pages" -> "Chapter pages"
+                        "series" -> model.activeSeries?.title.orEmpty()
+                        "prepare" -> "Prepare chapter"
                         "import" -> "Add chapter"
                         "webread" -> model.webReading?.chapter?.title.orEmpty()
                         "web" -> runCatching { java.net.URI(model.webUrl).host }.getOrNull() ?: "Browse"
@@ -114,6 +119,7 @@ private fun AppContent(model: RuyoModel) {
                                 IconButton(onClick = model::browse, enabled = !model.busy) { Icon(AppIcons.Web, "Browse websites") }
                                 IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add comic") }
                             }
+                            model.route == "series" -> IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add chapter") }
                             model.route == "web" -> {
                                 IconButton(onClick = { model.webAddressExpanded = !model.webAddressExpanded }, enabled = !model.busy, modifier = Modifier.testTag("toggle-web-address")) {
                                     Icon(if (model.webAddressExpanded) AppIcons.Close else AppIcons.Search, if (model.webAddressExpanded) "Close address bar" else "Enter website address")
@@ -148,14 +154,16 @@ private fun AppContent(model: RuyoModel) {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
-            if (model.webHostActive) WebBrowserScreen(model)
+            if (model.route == "web") WebBrowserScreen(model)
             Box(Modifier.fillMaxSize().then(if (model.route != "web") Modifier.background(MaterialTheme.colorScheme.background) else Modifier)) {
             when (model.route) {
                 "sample" -> SampleReader(model)
                 "book" -> key(model.chapter?.id) { BookReader(model) }
                 "pages" -> ChapterPagesScreen(model) { pickImages(model.chapter?.id) }
                 "import" -> ImportReviewScreen(model) { pickImages(model.importing?.appendTo) }
-                "web" -> if (!model.webHostActive) WebBrowserScreen(model)
+                "web" -> Unit
+                "series" -> SeriesScreen(model) { addComic = true }
+                "prepare" -> PreparationScreen(model)
                 "webread" -> WebReaderScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
                 "areas" -> model.areaSelection?.let { BubbleAreasScreen(model, it) }
@@ -171,10 +179,12 @@ private fun AppContent(model: RuyoModel) {
     }
     if (addComic) AlertDialog(onDismissRequest = { addComic = false }, title = { Text("Add a comic") },
         text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Import several images as one chapter, or open a chapter link.")
-            OutlinedButton(onClick = { addComic = false; pickImages() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Image, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Choose images") }
+            Text("Import a chapter into " + (model.activeSeries?.title ?: "your library") + ".")
+            OutlinedButton(onClick = { addComic = false; pickImages() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Image, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Images, PDF or CBZ") }
+            OutlinedButton(onClick = { addComic = false; newSeries = true }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Library, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("New series") }
             OutlinedButton(onClick = { addComic = false; model.browse() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Web, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Open website") }
         } }, confirmButton = {}, dismissButton = { TextButton(onClick = { addComic = false }) { Text("Cancel") } })
+    if (newSeries) SeriesNameDialog(dismiss = { newSeries = false }, save = { model.createSeries(it) })
     if (discardImport) AlertDialog(onDismissRequest = { discardImport = false }, title = { Text("Discard this import?") },
         text = { Text("These new pages have not been saved to your library.") },
         confirmButton = { TextButton(onClick = { discardImport = false; model.discardImport() }) { Text("Discard") } },
@@ -214,14 +224,16 @@ private fun LibraryScreen(model: RuyoModel, onImport: () -> Unit) {
     var filter by rememberSaveable { mutableStateOf("All") }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
-    val books = model.books.filter { it.title.contains(query, ignoreCase = true) }
+    val grouped = model.series.flatMap { it.chapters }.toSet()
+    val books = model.books.filter { it.id !in grouped && it.title.contains(query, ignoreCase = true) }
+    val groups = model.series.filter { group -> group.title.contains(query, ignoreCase = true) || model.orderedChapters(group.id).any { it.title.contains(query, ignoreCase = true) } }
     val sampleVisible = filter != "Imported" && "Before the rain".contains(query, ignoreCase = true)
     LazyVerticalGrid(columns = GridCells.Adaptive(148.dp), modifier = Modifier.fillMaxSize().testTag("library-screen"),
         contentPadding = PaddingValues(20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${model.books.size + 1} ${if (model.books.isEmpty()) "title" else "titles"}", style = MaterialTheme.typography.bodyMedium,
+                    Text("${model.series.size} series · ${model.books.size} chapters", style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     IconButton(onClick = { searching = !searching; if (!searching) query = "" }, modifier = Modifier.size(40.dp)) { Icon(if (searching) AppIcons.Close else AppIcons.Search, if (searching) "Close search" else "Search library", Modifier.size(20.dp)) }
                 }
@@ -237,21 +249,28 @@ private fun LibraryScreen(model: RuyoModel, onImport: () -> Unit) {
         if (sampleVisible && model.ready) item(key = "sample") {
             BookCover(model.samples.firstOrNull()?.translated, "Before the rain", "Sample · 3 panels", "book-sample", onClick = model::openSample)
         }
+        if (filter != "Samples" && model.ready) items(groups, key = { "series-" + it.id }) { group ->
+            val chapters = model.orderedChapters(group.id)
+            val cover by produceState<Bitmap?>(null, group.id, chapters.firstOrNull()?.id) {
+                value = chapters.firstOrNull()?.let { book -> withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
+            }
+            BookCover(cover, group.title, "${chapters.size} chapters", "series-${group.id}") { model.openSeries(group.id) }
+        }
         if (filter != "Samples" && model.ready) items(books, key = { it.id }) { book ->
             val cover by produceState<Bitmap?>(null, book.id, book.pages.first().id) { value = withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
             BookCover(cover, book.title, "${book.pages.size} ${if (book.pages.size == 1) "page" else "pages"}", "book-${book.id}") { model.openBook(book) }
         }
-        if (model.ready && (filter == "Imported" && books.isEmpty() || query.isNotBlank() && books.isEmpty() && !sampleVisible)) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (model.ready && (filter == "Imported" && books.isEmpty() && groups.isEmpty() || query.isNotBlank() && books.isEmpty() && groups.isEmpty() && !sampleVisible)) item(span = { GridItemSpan(maxLineSpan) }) {
             EmptyState(AppIcons.Image, if (query.isBlank()) "No imported chapters" else "No matching titles",
                 if (query.isBlank()) "Choose your comic images or open a chapter link to start reading." else "Try another title.") {
                 if (query.isBlank()) Button(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add chapter") }
             }
         }
-        if (model.books.isEmpty() && filter == "All" && query.isBlank() && model.ready) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (model.books.isEmpty() && model.series.isEmpty() && filter == "All" && query.isBlank() && model.ready) item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("Add your own comic", style = MaterialTheme.typography.titleMedium)
-                Text("Choose multiple images or open a chapter link. Put the pages in order, then read and edit their bubbles.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Import images, a PDF, a CBZ, or a chapter link. Organize chapters into series and prepare translations before reading.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add chapter") }
             }
         }
@@ -266,7 +285,7 @@ private fun BookCover(bitmap: Bitmap?, title: String, subtitle: String, tag: Str
             if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else Icon(AppIcons.Image, null, Modifier.size(28.dp).align(Alignment.Center), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Surface(Modifier.align(Alignment.BottomStart).padding(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), shape = RoundedCornerShape(3.dp)) {
-                Text(if (tag == "book-sample") "SAMPLE" else "LOCAL", Modifier.padding(horizontal = 6.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
+                Text(if (tag == "book-sample") "SAMPLE" else if (tag.startsWith("series-")) "SERIES" else "LOCAL", Modifier.padding(horizontal = 6.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -329,7 +348,7 @@ private fun SettingsScreen(model: RuyoModel) {
             SectionLabel("About")
             SettingLine("Ruyo", "0.4.1 preview")
             Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("Read local chapters or websites with translation as you scroll. Tap translated dialogue for grammar, vocabulary, examples, and practice. Use Edit in the lesson sheet to adjust its text and lettering.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Import chapter images, PDFs, or CBZs into named series. Prepare translations before reading, then switch between Original and Translated. Tap translated dialogue for grammar, vocabulary, examples, and practice.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

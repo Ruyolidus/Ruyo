@@ -26,6 +26,7 @@ data class LocalBook(
 )
 data class OpenBook(val book: LocalBook, val original: Bitmap, val displayed: Bitmap, val edits: List<BubbleEdit>, val page: LocalPage = book.pages.first())
 data class StagedPage(val page: LocalPage, val folder: File)
+data class PagePreparation(val message: String, val needsReview: Boolean)
 data class ReadingPosition(val pageId: String, val offset: Int)
 data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null, val languageTag: String = "ja")
 
@@ -170,13 +171,39 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
         }
         require(existing.size < 40 || existing.any { it.id == edit.id }) { "This page already has 40 edited bubbles." }
         writeEdits(dir, existing.filterNot { it.id == edit.id } + edit)
+        invalidatePreparation(bookId, book.pages.first { pageId == null || it.id == pageId }.id)
     }
     @Synchronized fun removeEdit(bookId: String, id: String, pageId: String? = null) {
         val book = readBook(bookId)
         val dir = pageFolder(book, book.pages.first { pageId == null || it.id == pageId })
         writeEdits(dir, readEdits(dir).filterNot { it.id == id })
+        invalidatePreparation(bookId, book.pages.first { pageId == null || it.id == pageId }.id)
     }
     @Synchronized fun removeBook(bookId: String) { check(folder(bookId).deleteRecursively()) { "The chapter could not be removed." } }
+
+    @Synchronized fun preparation(book: LocalBook, key: String): Map<String, PagePreparation> {
+        val file = File(folder(book.id), "preparation.json")
+        if (!file.exists()) return emptyMap()
+        val obj = JSONObject(read(file))
+        if (obj.optString("key") != key) return emptyMap()
+        val pages = obj.getJSONObject("pages")
+        return book.pages.mapNotNull { page -> pages.optJSONObject(page.id)?.let {
+            page.id to PagePreparation(it.getString("message"), it.getBoolean("review"))
+        } }.toMap()
+    }
+    @Synchronized fun recordPreparation(book: LocalBook, key: String, pageId: String, value: PagePreparation) {
+        require(book.pages.any { it.id == pageId })
+        val values = preparation(book, key) + (pageId to value)
+        write(File(folder(book.id), "preparation.json"), JSONObject().put("key", key).put("pages", JSONObject().apply {
+            values.forEach { (id, report) -> put(id, JSONObject().put("message", report.message).put("review", report.needsReview)) }
+        }).toString())
+    }
+    private fun invalidatePreparation(bookId: String, pageId: String) {
+        val file = File(folder(bookId), "preparation.json")
+        if (file.exists()) {
+            val obj = JSONObject(read(file)); obj.getJSONObject("pages").remove(pageId); write(file, obj.toString())
+        }
+    }
 
     @Synchronized fun progress(book: LocalBook): ReadingPosition {
         val first = ReadingPosition(book.pages.first().id, 0)

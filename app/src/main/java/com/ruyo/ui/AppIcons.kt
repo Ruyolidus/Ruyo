@@ -22,6 +22,7 @@ object AppIcons {
     val Bookmark = icon("Bookmark", "M6,4 L18,4 L18,21 L12,17 L6,21 Z")
     val Settings = icon("Settings", "M4,7 L20,7 M4,17 L20,17 M9,4 L9,10 M15,14 L15,20")
     val Plus = icon("Add", "M12,5 L12,19 M5,12 L19,12")
+    val Next = icon("Next", "M9,4 L17,12 L9,20")
     val Back = icon("Back", "M15,5 L8,12 L15,19")
     val Close = icon("Close", "M6,6 L18,18 M18,6 L6,18")
     val Search = icon("Search", "M17,10 A7,7 0,1 1,3,10 A7,7 0,1 1,17,10 M15,15 L21,21")

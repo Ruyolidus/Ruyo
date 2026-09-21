@@ -48,6 +48,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
     var failure by remember { mutableStateOf<String?>(null) }
     var candidates by remember { mutableStateOf<WebChapter?>(null) }
     var scanning by remember { mutableStateOf(false) }
+    var collected by remember { mutableStateOf<WebChapter?>(null) }
     var generation by remember { mutableIntStateOf(0) }
     var dead by remember { mutableStateOf(false) }
     var canGoBack by remember { mutableStateOf(false) }
@@ -77,51 +78,36 @@ internal fun WebBrowserScreen(model: RuyoModel) {
             if (dead) { dead = false; generation++ } else web?.loadUrl(url)
         }.onFailure { failure = it.message ?: "Enter a valid website address." }
     }
-    fun discover(read: Boolean) {
+    fun collect(source: WebChapter): WebChapter {
+        val previous = collected?.takeIf { it.url == source.url }
+        val chapterImages = LiveChapter.merge(previous?.images.orEmpty().filter { it.likelyPage }, source.images)
+        val other = (previous?.images.orEmpty() + source.images).filter { !it.likelyPage }.distinctBy { it.url }
+        return source.copy(images = (chapterImages + other).distinctBy { it.url }.take(com.ruyo.data.LocalBookStore.MAX_PAGES)).also { collected = it }
+    }
+    fun discover() {
         val view = web ?: return
         val expected = view.url ?: return
         scanning = true
         view.evaluateJavascript(WebImageDiscovery.script) { result ->
             scanning = false
             if (model.route == "web" && view === web && view.url == expected) {
-                runCatching { WebImageDiscovery.parse(result, expected) }.onSuccess { source ->
-                    if (read) {
-                        val images = source.images.filter { it.likelyPage }
-                        run {
-                            val cookies = images.associate { it.url to CookieManager.getInstance().getCookie(it.url).orEmpty() }
-                            model.readWebsite(source.copy(images = images), cookies, view.settings.userAgentString.orEmpty())
-                        }
-                    } else if (source.images.isEmpty()) failure = "No usable images found. Scroll to load the chapter, then try again. Canvas-only readers need a dedicated source adapter."
+                runCatching { collect(WebImageDiscovery.parse(result, expected)) }.onSuccess { source ->
+                    if (source.images.isEmpty()) failure = "No usable images found. Scroll through the chapter, then try again. Canvas-only readers need a dedicated source adapter."
                     else candidates = source
                 }.onFailure { failure = it.message ?: "Could not find images on this page." }
             }
         }
     }
-    LaunchedEffect(web, model.route, model.foreground, model.webReading?.id) {
+    // Collect images as the user browses. No hidden website scrolling or live swapping.
+    LaunchedEffect(web, model.foreground) {
         val view = web
-        val session = model.webReading
-        if (view != null && session != null && model.route == "webread" && model.foreground) {
-            while (model.route == "webread" && model.foreground && web === view && !dead) {
-                if (view.url?.substringBefore('#') != session.chapter.url) {
-                    model.webLoadingMessage("The website changed. Return to Website to continue.")
-                    break
-                }
-                if (session.images.size >= com.ruyo.data.LocalBookStore.MAX_PAGES) {
-                    model.webLoadingMessage("200-image session limit reached. Use Website for the remaining pages.")
-                    break
-                }
-                val anchor = session.images.getOrNull(model.webVisible.firstOrNull() ?: model.webPosition.first)
-                val nearEnd = (model.webVisible.maxOrNull() ?: model.webPosition.first) >= session.images.size - 3
-                view.evaluateForReader(LiveChapter.advanceScript(anchor?.url, model.webFraction, nearEnd))
-                // Give scroll listeners and IntersectionObserver a frame before discovery.
-                delay(350)
+        if (view != null && model.foreground) while (web === view && model.foreground && !dead) {
+            val expected = view.url
+            if (!expected.isNullOrBlank() && expected != "about:blank") {
                 val raw = view.evaluateForReader(WebImageDiscovery.script)
-                runCatching { WebImageDiscovery.parse(raw, session.chapter.url) }.onSuccess { source ->
-                    val cookies = source.images.filter { it.likelyPage }.associate { it.url to CookieManager.getInstance().getCookie(it.url).orEmpty() }
-                    model.acceptWebDiscovery(session.id, source, cookies)
-                }.onFailure { model.webLoadingMessage("Waiting for the website. Use Website if the next image needs a tap.") }
-                delay(if (nearEnd) 850 else 1800)
+                if (view.url == expected) runCatching { collect(WebImageDiscovery.parse(raw, expected)) }
             }
+            delay(1400)
         }
     }
     BackHandler(model.route == "web" && canGoBack && !model.busy) { web?.goBack() }
@@ -184,7 +170,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                                 return !allowed
                             }
                             override fun onPageStarted(view: WebView, url: String?, favicon: Bitmap?) {
-                                if (url != null && url != "about:blank") { model.webUrl = url; address = url; failure = null; candidates = null }
+                                if (url != null && url != "about:blank") { model.webUrl = url; address = url; failure = null; candidates = null; collected = null }
                                 canGoBack = view.canGoBack()
                             }
                             override fun onPageFinished(view: WebView, url: String?) { canGoBack = view.canGoBack(); progress = 100 }
@@ -222,7 +208,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 })
             }
             if (model.webUrl.isBlank()) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                EmptyState(AppIcons.Web, "Read from a website", "Tap the address icon at the top right to open a chapter. Use Read for translation and editing while reading, or Import to save pages for offline reading.")
+                EmptyState(AppIcons.Web, "Read from a website", "Open a chapter with the address icon. Scroll through it to load its pages, then extract the images into your library. Translation happens during import.")
             }
         }
         Surface(Modifier.zIndex(1f), color = MaterialTheme.colorScheme.surface) {
@@ -231,10 +217,8 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 IconButton(onClick = { failure = null; web?.reload() }, enabled = !model.busy && model.webUrl.isNotBlank() && !dead) { Icon(AppIcons.Refresh, "Reload webpage") }
                 IconButton(onClick = { clearData = true }, enabled = !model.busy) { Icon(AppIcons.Trash, "Clear browsing data", Modifier.size(20.dp)) }
                 Spacer(Modifier.weight(1f))
-                TextButton(onClick = { discover(false) }, enabled = !model.busy && !scanning && model.webUrl.isNotBlank() && !dead,
-                    modifier = Modifier.testTag("find-web-images")) { Text("Import") }
-                Button(onClick = { discover(true) }, enabled = !model.busy && !scanning && model.webUrl.isNotBlank() && !dead,
-                    modifier = Modifier.testTag("read-web-chapter")) { Text(if (scanning) "Finding…" else "Read") }
+                Button(onClick = ::discover, enabled = !model.busy && !scanning && model.webUrl.isNotBlank() && !dead,
+                    modifier = Modifier.testTag("find-web-images")) { Text(if (scanning) "Finding…" else "Extract images") }
             }
         }
     }

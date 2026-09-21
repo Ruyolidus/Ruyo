@@ -28,6 +28,8 @@ import java.io.File
 @Composable
 internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
     val draft = model.importing ?: return
+    var newSeries by remember { mutableStateOf(false) }
+    if (newSeries) SeriesNameDialog(dismiss = { newSeries = false }, save = { model.createSeries(it, forImport = true) })
     Column(Modifier.fillMaxSize().imePadding().testTag("import-review")) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item {
@@ -35,6 +37,23 @@ internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
                 Text("Check the image order before saving. Read from top to bottom.", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             item { OutlinedTextField(draft.title, model::renameImport, enabled = !model.busy, label = { Text("Chapter title") }, singleLine = true, modifier = Modifier.fillMaxWidth().testTag("chapter-title")) }
+            item {
+                SeriesPicker(model, draft.seriesId, !model.busy, model::setImportSeries, { newSeries = true })
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Translate before reading", style = MaterialTheme.typography.titleSmall)
+                        Text("Prepare every page with AI after saving.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Switch(draft.translateBeforeReading, model::setImportTranslation, enabled = !model.busy, modifier = Modifier.testTag("translate-import"))
+                }
+                if (draft.translateBeforeReading) {
+                    LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy)
+                    TextButton(onClick = model::editProfiles, enabled = !model.busy) { Text(model.activeProfile?.name ?: "Choose AI provider") }
+                    Text("Only recognized dialogue text is sent. Unsupported lettering remains original and is flagged for review.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${draft.pages.size} images", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -59,9 +78,9 @@ internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
             if (draft.pages.isEmpty()) item { Text("No images yet. Use + to choose images from your device.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
         Surface(color = MaterialTheme.colorScheme.surface) {
-            Button(onClick = model::saveImport, enabled = draft.pages.isNotEmpty() && !model.busy && draft.title.isNotBlank(),
+            Button(onClick = model::saveImport, enabled = draft.pages.isNotEmpty() && !model.busy && draft.title.isNotBlank() && (!draft.translateBeforeReading || model.activeProfile != null),
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp).height(48.dp).testTag("save-chapter")) {
-                Text(if (draft.appendTo == null) "Save chapter" else "Add ${draft.pages.size} images")
+                Text(if (draft.translateBeforeReading) "Save and translate" else if (draft.appendTo == null) "Save chapter" else "Add ${draft.pages.size} images")
             }
         }
     }
@@ -71,12 +90,14 @@ internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
 internal fun ChapterPagesScreen(model: RuyoModel, onAppend: () -> Unit) {
     val book = model.chapter ?: return
     var title by rememberSaveable(book.id) { mutableStateOf(book.title) }
+    var selectedSeries by rememberSaveable(book.id) { mutableStateOf(model.seriesFor(book.id)?.id) }
     var pageIds by rememberSaveable(book.id) { mutableStateOf(book.pages.map { it.id }) }
     val pages = pageIds.mapNotNull { id -> book.pages.firstOrNull { it.id == id } }
     var remove by remember { mutableStateOf<LocalPage?>(null) }
     Column(Modifier.fillMaxSize().imePadding().testTag("chapter-pages")) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             item { OutlinedTextField(title, { title = it.take(120) }, enabled = !model.busy, label = { Text("Chapter title") }, singleLine = true, modifier = Modifier.fillMaxWidth()) }
+            item { SeriesPicker(model, selectedSeries, !model.busy, { selectedSeries = it }) }
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("${pages.size} pages", Modifier.weight(1f), style = MaterialTheme.typography.bodySmall)
@@ -96,7 +117,7 @@ internal fun ChapterPagesScreen(model: RuyoModel, onAppend: () -> Unit) {
             }
         }
         Surface {
-            Button(onClick = { model.updateChapter(title, pages.map { it.id }) }, enabled = !model.busy && title.isNotBlank(),
+            Button(onClick = { model.updateChapter(title, pages.map { it.id }, selectedSeries) }, enabled = !model.busy && title.isNotBlank(),
                 modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp, vertical = 12.dp).height(48.dp).testTag("save-page-order")) { Text("Save changes") }
         }
     }

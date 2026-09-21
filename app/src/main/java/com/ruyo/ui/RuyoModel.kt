@@ -13,6 +13,7 @@ import androidx.lifecycle.viewModelScope
 import com.ruyo.data.*
 import com.ruyo.ai.*
 import com.ruyo.importer.NaturalOrder
+import com.ruyo.importer.DocumentImporter
 import com.ruyo.reader.*
 import com.ruyo.sample.SampleChapter
 import com.ruyo.sample.SamplePage
@@ -29,7 +30,7 @@ data class EditorDraft(val edit: BubbleEdit, val crop: Bitmap, val initialMask: 
 data class AreaSelection(val region: BubbleRegion, val crop: Bitmap, val centers: List<Point>, val x: Int, val y: Int, val error: String? = null)
 
 data class ChapterImport(val title: String, val pages: List<StagedPage>, val appendTo: String? = null, val sourceUrl: String? = null,
-    val returnRoute: String = "home", val failures: List<String> = emptyList())
+    val returnRoute: String = "home", val failures: List<String> = emptyList(), val seriesId: String? = null, val translateBeforeReading: Boolean = false)
 data class ImportProgress(val done: Int, val total: Int)
 
 class RuyoModel @JvmOverloads constructor(application: Application,
@@ -40,6 +41,101 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private val explanationService: ExplanationService = ExplanationClient(),
 ) : AndroidViewModel(application) {
     val store = LocalBookStore(application)
+    val seriesStore = SeriesStore(application)
+    var series by mutableStateOf<List<ComicSeries>>(emptyList()); private set
+    var activeSeriesId by mutableStateOf<String?>(null); private set
+    val activeSeries get() = series.firstOrNull { it.id == activeSeriesId }
+    var preparationRunning by mutableStateOf(false); private set
+    var preparationStatus by mutableStateOf("Ready to prepare this chapter"); private set
+    var preparationError by mutableStateOf<String?>(null); private set
+    var preparationReports by mutableStateOf<Map<String, PagePreparation>>(emptyMap()); private set
+    private var preparationJob: Job? = null
+    private var prepareAfterTask = false
+    private val preparationKey get() = targetLanguage + ":" + ocrScript.name
+    fun seriesFor(bookId: String) = series.firstOrNull { bookId in it.chapters }
+    fun orderedChapters(seriesId: String): List<LocalBook> = series.firstOrNull { it.id == seriesId }?.chapters.orEmpty().mapNotNull { id -> books.firstOrNull { it.id == id } }
+    fun neighbor(delta: Int): LocalBook? {
+        val current = chapter ?: return null
+        val group = seriesFor(current.id) ?: return null
+        val ordered = orderedChapters(group.id)
+        return ordered.getOrNull(ordered.indexOfFirst { it.id == current.id } + delta)
+    }
+    fun openSeries(id: String) { activeSeriesId = id; route = "series" }
+    fun createSeries(title: String, forImport: Boolean = false) = task {
+        val created = withContext(Dispatchers.IO) { seriesStore.create(title) }
+        series = withContext(Dispatchers.IO) { seriesStore.list() }
+        if (forImport) importing = importing?.copy(seriesId = created.id)
+        else { activeSeriesId = created.id; route = "series" }
+    }
+    fun renameSeries(title: String) = task {
+        val id = activeSeriesId ?: return@task
+        withContext(Dispatchers.IO) { seriesStore.rename(id, title) }
+        series = withContext(Dispatchers.IO) { seriesStore.list() }
+    }
+    fun removeSeries() = task {
+        val id = activeSeriesId ?: return@task
+        withContext(Dispatchers.IO) { seriesStore.remove(id) }
+        series = withContext(Dispatchers.IO) { seriesStore.list() }; home()
+    }
+    fun moveSeriesChapter(bookId: String, delta: Int) = task {
+        val group = activeSeries ?: return@task
+        val ids = group.chapters.toMutableList(); val index = ids.indexOf(bookId); val target = index + delta
+        if (index >= 0 && target in ids.indices) {
+            ids.add(target, ids.removeAt(index))
+            withContext(Dispatchers.IO) { seriesStore.reorder(group.id, ids) }
+            series = withContext(Dispatchers.IO) { seriesStore.list() }
+        }
+    }
+    fun leaveReader() {
+        flushPosition(); closeLesson(); pauseScrolling(); pausePreparation()
+        val group = chapter?.let { seriesFor(it.id) }
+        if (group != null) openSeries(group.id) else home()
+    }
+    fun setImportSeries(id: String?) { importing = importing?.copy(seriesId = id) }
+    fun setImportTranslation(value: Boolean) { importing = importing?.copy(translateBeforeReading = value) }
+    fun pausePreparation(): Job? = preparationJob?.also { it.cancel() }
+    fun finishPreparation() = task { pausePreparation()?.join(); pageLoader.clear(); pageRevision++; route = "book" }
+    fun reviewPreparedPage(pageId: String) = task {
+        pausePreparation()?.join(); pageLoader.clear()
+        readingPosition = ReadingPosition(pageId, 0); pageRevision++; selecting = true; route = "book"
+    }
+    fun startPreparation() {
+        val book = chapter ?: return
+        if (busy || preparationJob?.isCompleted == false) return
+        if (activeProfile == null) { editProfiles(); return }
+        val settings = TranslationSettings(requireNotNull(activeProfileId), targetLanguage, ocrScript)
+        val key = preparationKey
+        val pipeline = PageTranslationPipeline(store, ocrService, profileStore, translationService)
+        preparationRunning = true; preparationError = null; route = "prepare"
+        preparationJob = viewModelScope.launch {
+            try {
+                scrollTranslation?.pause()?.join(); pageLoader.clear()
+                preparationReports = withContext(Dispatchers.IO) { store.preparation(book, key) }
+                for ((index, metadata) in book.pages.withIndex()) {
+                    ensureActive()
+                    if (metadata.id in preparationReports) continue
+                    preparationStatus = "Page ${index + 1} of ${book.pages.size} · Recognizing dialogue…"
+                    val page = pageLoader.load(book, metadata)
+                    val coroutine = currentCoroutineContext()
+                    val report = pipeline.prepare(page, settings, { coroutine.isActive }, { detail -> preparationStatus = "Page ${index + 1} of ${book.pages.size} · " + detail }) {
+                        pageLoader.clear(); pageRevision++
+                    } ?: continue
+                    ensureActive()
+                    withContext(Dispatchers.IO) { store.recordPreparation(book, key, metadata.id, report) }
+                    preparationReports = preparationReports + (metadata.id to report)
+                    pageLoader.clear()
+                }
+                preparationStatus = "Chapter preparation finished"
+            } catch (_: TimeoutCancellationException) {
+                preparationError = "The provider timed out. Resume to continue with the unfinished page."
+            } catch (cancelled: CancellationException) {
+                preparationStatus = "Preparation paused. Completed translations are saved."
+                throw cancelled
+            } catch (error: Exception) {
+                preparationError = error.message ?: "Could not prepare this chapter. Completed translations are saved."
+            } finally { preparationRunning = false }
+        }
+    }
     val pageLoader = ReaderPageLoader(store)
     private val prefs = application.getSharedPreferences("settings", 0)
     private var operation: Job? = null
@@ -79,7 +175,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var webLoadStatus by mutableStateOf("Watching for more chapter images…"); private set
     var webVisible by mutableStateOf<List<Int>>(emptyList()); private set
     var webFraction by mutableStateOf(0f); private set
-    fun appForeground(value: Boolean) { foreground = value; if (!value) { pauseScrolling(); cancelExplanation() } }
+    fun appForeground(value: Boolean) { foreground = value; if (!value) { pauseScrolling(); pausePreparation(); cancelExplanation() } }
     fun webViewport(indices: List<Int>, fraction: Float) { webVisible = indices; webFraction = fraction }
     suspend fun acceptWebDiscovery(sessionId: String, source: WebChapter, cookies: Map<String, String>) {
         val session = webReading ?: return
@@ -177,25 +273,27 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     fun refresh() = task {
         val data = withContext(Dispatchers.IO) { store.list() to store.savedLines() }
         books = data.first; saved = data.second
+        series = withContext(Dispatchers.IO) { seriesStore.list() }
         if (samples.isEmpty()) samples = withContext(Dispatchers.Default) { SampleChapter.build() }
         loadProfiles()
         ready = true
     }
     fun changeTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun home() {
-        closeLesson(); cancelAi(); pauseScrolling(); webHostActive = false; readerImmersive = false; areaSelection = null; editorWebIndex = null
+        closeLesson(); cancelAi(); pauseScrolling(); pausePreparation(); activeSeriesId = null; webHostActive = false; readerImmersive = false; areaSelection = null; editorWebIndex = null
         flushPosition()
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
     }
-    fun changeTargetLanguage(value: String) { scrollTranslation?.reset(); targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
+    fun changeTargetLanguage(value: String) { pausePreparation(); scrollTranslation?.reset(); targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
     fun openSample() { route = "sample"; japanese = true }
     fun browse() { pauseScrolling(); webHostActive = true; route = "web" }
     fun managePages() { pauseScrolling(); selecting = false; route = "pages" }
     fun reader() { route = "book" }
 
     fun importImage(uri: Uri) = importImages(listOf(uri))
-    fun importImages(uris: List<Uri>, appendTo: String? = null) = task {
+    fun importImages(uris: List<Uri>, appendTo: String? = null) = importFiles(uris, appendTo)
+    fun importFiles(uris: List<Uri>, appendTo: String? = null) = task {
         if (uris.isEmpty()) return@task
         val previous = importing
         val target = previous?.appendTo ?: appendTo
@@ -204,20 +302,24 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val existingBook = target?.let { withContext(Dispatchers.IO) { store.readBook(it) } }
         val limit = LocalBookStore.MAX_PAGES - before.size - (existingBook?.pages?.size ?: 0)
         require(uris.distinct().size <= limit) { "Choose no more than $limit additional images." }
-        stageBatch(uris.distinct(), before, returnRoute, target, previous?.title ?: existingBook?.title, previous?.sourceUrl, true) { uri, cancelled -> store.stage(uri, cancelled) }
+        stageBatch(uris.distinct(), before, returnRoute, target, previous?.title ?: existingBook?.title, previous?.sourceUrl, true) { uri, cancelled, capacity, budget ->
+            DocumentImporter(getApplication(), store).stage(uri, capacity, budget, cancelled)
+        }
     }
     fun importWeb(source: WebChapter, selectedUrls: Set<String>, cookies: Map<String, String>, userAgent: String) = task {
         val images = source.images.filter { it.url in selectedUrls }
         require(images.isNotEmpty()) { "Select at least one image." }
-        stageBatch(images, emptyList(), "web", null, source.title, source.url, false) { image, cancelled ->
-            store.stageStream(image.name, cancelled) { WebImageDownload().open(image.url, source.url, userAgent, cookies[image.url], cancelled) }
+        stageBatch(images, emptyList(), "web", null, source.title, source.url, false) { image, cancelled, _, _ ->
+            listOf(store.stageStream(image.name, cancelled) { WebImageDownload().open(image.url, source.url, userAgent, cookies[image.url], cancelled) })
         }
     }
     private suspend fun <T> stageBatch(inputs: List<T>, before: List<StagedPage>, returnRoute: String, appendTo: String?, title: String?, url: String?, sort: Boolean,
-        load: (T, () -> Unit) -> StagedPage) {
+        load: (T, () -> Unit, Int, Long) -> List<StagedPage>) {
         val created = mutableListOf<StagedPage>()
         val failures = mutableListOf<String>()
         importProgress = ImportProgress(0, inputs.size)
+        val previous = importing
+        val existing = appendTo?.let { withContext(Dispatchers.IO) { store.readBook(it) } }
         try {
             withContext(Dispatchers.IO) {
                 val context = currentCoroutineContext()
@@ -225,21 +327,23 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                 for ((index, input) in inputs.withIndex()) {
                     context.ensureActive()
                     try {
-                        val page = load(input) { context.ensureActive() }
-                        val size = page.folder.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+                        val pages = load(input, { context.ensureActive() }, LocalBookStore.MAX_PAGES - before.size - created.size - (existing?.pages?.size ?: 0), 512L * 1024 * 1024 - bytes)
+                        val size = pages.sumOf { page -> page.folder.walkTopDown().filter { it.isFile }.sumOf { it.length() } }
                         if (bytes + size > 512L * 1024 * 1024) {
-                            store.discard(listOf(page))
+                            store.discard(pages)
                             for (remaining in index until inputs.size) failures += "Image ${remaining + 1}: The 512 MB batch limit was reached. Add this image in another batch."
                             break
                         }
-                        created += page; bytes += size
+                        created += pages; bytes += size
                     } catch (error: CancellationException) { throw error }
                     catch (error: Exception) { failures += "Image ${index + 1}: ${error.message ?: "Could not read this image."}" }
                     withContext(Dispatchers.Main) { importProgress = ImportProgress(index + 1, inputs.size) }
                 }
             }
             val pages = before + if (sort) created.sortedWith { a, b -> NaturalOrder.compare(a.page.name, b.page.name) } else created
-            importing = ChapterImport(title ?: pages.firstOrNull()?.page?.name?.substringBeforeLast('.') ?: "New chapter", pages, appendTo, url, returnRoute, failures)
+            importing = ChapterImport(title ?: pages.firstOrNull()?.page?.name?.substringBeforeLast('.') ?: "New chapter", pages, appendTo, url, returnRoute, failures,
+                if (previous != null) previous.seriesId else existing?.let { seriesFor(it.id)?.id } ?: activeSeriesId,
+                previous?.translateBeforeReading ?: (activeProfile != null))
             route = "import"
         } catch (error: CancellationException) {
             withContext(NonCancellable + Dispatchers.IO) { store.discard(created) }
@@ -273,24 +377,33 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val book = withContext(Dispatchers.IO) { store.commitChapter(current.title, current.pages, current.appendTo, current.sourceUrl) }
         importing = null
         books = withContext(Dispatchers.IO) { store.list() }
+        val groupResult = withContext(Dispatchers.IO) { runCatching { seriesStore.assign(book.id, current.seriesId) } }
+        series = withContext(Dispatchers.IO) { seriesStore.list() }
         setChapter(book)
-        message = "${current.pages.size} ${if (current.pages.size == 1) "image" else "images"} added to the chapter"
+        prepareAfterTask = current.translateBeforeReading && activeProfile != null
+        message = if (groupResult.isFailure) "Chapter saved, but it could not be placed in that series." else "Chapter saved"
+
     }
-    fun openBook(book: LocalBook) = task { setChapter(withContext(Dispatchers.IO) { store.readBook(book.id) }) }
+    fun openBook(book: LocalBook) = task { flushPosition(); setChapter(withContext(Dispatchers.IO) { store.readBook(book.id) }) }
     private suspend fun setChapter(book: LocalBook) {
+        pausePreparation()?.join()
         scrollTranslation?.pause()?.join()
         editorWebIndex = null
         pageLoader.clear()
         chapter = book; opened = null
         readingPosition = withContext(Dispatchers.IO) { store.progress(book) }
+        preparationReports = withContext(Dispatchers.IO) { store.preparation(book, preparationKey) }
         pageRevision++; route = "book"; japanese = true; selecting = false
         configureScroll(store, book.pages.size, { index -> pageLoader.load(book, book.pages[index]) }, { pageLoader.clear() })
     }
-    fun updateChapter(title: String, pageIds: List<String>) = task {
+    fun updateChapter(title: String, pageIds: List<String>, seriesId: String? = chapter?.let { seriesFor(it.id)?.id }) = task {
+        pausePreparation()?.join()
         scrollTranslation?.pause()?.join()
         val book = chapter ?: return@task
         val updated = withContext(Dispatchers.IO) { store.updateChapter(book.id, title, pageIds) }
         books = withContext(Dispatchers.IO) { store.list() }
+        withContext(Dispatchers.IO) { seriesStore.assign(updated.id, seriesId) }
+        series = withContext(Dispatchers.IO) { seriesStore.list() }
         setChapter(updated)
         message = "Chapter updated"
     }
@@ -312,13 +425,16 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         progressJob = viewModelScope.launch(Dispatchers.IO) { store.saveProgress(book.id, position) }
     }
     fun removeBook(book: LocalBook) = task {
+        pausePreparation()?.join()
         scrollTranslation?.pause()?.join()
-        withContext(Dispatchers.IO) { store.removeBook(book.id) }
+        withContext(Dispatchers.IO) { store.removeBook(book.id); seriesStore.removeChapter(book.id) }
+        series = withContext(Dispatchers.IO) { seriesStore.list() }
         pageLoader.clear()
         books = books.filterNot { it.id == book.id }; home(); message = "Chapter removed from the library"
     }
     fun selectBubble(x: Int, y: Int, page: OpenBook? = opened) = task {
         val book = page ?: return@task
+        pausePreparation()?.join()
         scrollTranslation?.pause()?.join()
         editorWebIndex = null
         // A completed background swap may have been saved during cancellation.
@@ -522,10 +638,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
             if (profiles.none { it.id == activeProfileId }) selectProfile(profiles.firstOrNull()?.id)
         } catch (error: Exception) { profileError = error.message ?: "Could not open the encrypted provider store." }
     }
-    fun editProfiles() { closeLesson(); cancelAi(); pauseScrolling(); profileReturnRoute = route; route = "profiles" }
+    fun editProfiles() { closeLesson(); cancelAi(); pauseScrolling(); pausePreparation(); profileReturnRoute = route; route = "profiles" }
     fun closeProfiles() { route = profileReturnRoute; if (route == "editor") prepareEditorAutomatically() }
     fun selectProfile(id: String?) {
-        cancelAi(); cancelExplanation(); explanation = null; scrollTranslation?.reset(); activeProfileId = id
+        pausePreparation(); cancelAi(); cancelExplanation(); explanation = null; scrollTranslation?.reset(); activeProfileId = id
         prefs.edit().putString("activeProfile", id).apply()
     }
     fun saveProfile(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean, onSaved: () -> Unit) = task {
@@ -546,7 +662,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         aiError = null; draft = draft?.copy(sourceText = value)
     }
     fun changeOcrScript(value: OcrScript) {
-        cancelAi(); scrollTranslation?.reset(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
+        pausePreparation(); cancelAi(); scrollTranslation?.reset(); ocrScript = value; prefs.edit().putString("ocrScript", value.name).apply()
     }
     fun cancelAi() {
         aiGeneration++; aiOperation?.cancel(); aiOperation = null; aiStatus = null
@@ -618,6 +734,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                 val pending = automaticEditorId
                 automaticEditorId = null
                 if (pending != null && draft?.edit?.id == pending) prepareEditorAutomatically()
+                if (prepareAfterTask) { prepareAfterTask = false; startPreparation() }
             }
         }
     }

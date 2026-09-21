@@ -43,7 +43,7 @@ data class BubbleEdit(
 
 sealed interface SelectionResult {
     data class Selected(val region: BubbleRegion) : SelectionResult
-    data class Rejected(val reason: String, val retryNearby: Boolean = false) : SelectionResult
+    data class Rejected(val reason: String, val retryNearby: Boolean = false, val retryOutline: Boolean = false) : SelectionResult
 }
 
 /** A deliberately limited, user-seeded selector for enclosed, light, flat bubbles. */
@@ -54,7 +54,17 @@ object BubbleSelector {
         if (x !in 0 until w || y !in 0 until h) return SelectionResult.Rejected("Tap inside the image.")
         val pixels = IntArray(w * h)
         source.getPixels(pixels, 0, w, 0, 0, w, h)
-        val direct = selectAt(pixels, w, h, x, y)
+        var outlineAttempted = false
+        fun pick(xx: Int, yy: Int): SelectionResult {
+            val selected = selectAt(pixels, w, h, xx, yy)
+            if (selected is SelectionResult.Rejected && selected.retryOutline && !outlineAttempted) {
+                outlineAttempted = true
+                val repaired = selectThroughSmallGap(pixels, w, h, xx, yy)
+                if (repaired is SelectionResult.Selected && repaired.region.contains(x, y) && repaired.region.eraseMask.any { it }) return repaired
+            }
+            return selected
+        }
+        val direct = pick(x, y)
         if (direct is SelectionResult.Selected && (direct.region.eraseMask.any { it } || minOf(direct.region.width, direct.region.height) > 72)) return direct
         if (direct is SelectionResult.Rejected && isLight(pixels[y * w + x]) && !direct.retryNearby) return direct
         // A tap can land on dark ink, a pale antialiased edge, or a white counter
@@ -69,7 +79,7 @@ object BubbleSelector {
             val xx = x + dx; val yy = y + dy
             if (xx !in 0 until w || yy !in 0 until h || !isLight(pixels[yy * w + xx])) continue
             if (attempts++ >= 32) return direct
-            val nearby = selectAt(pixels, w, h, xx, yy)
+            val nearby = pick(xx, yy)
             if (nearby is SelectionResult.Selected && nearby.region.contains(x, y) && nearby.region.eraseMask.any { it }) return nearby
         }
         return direct
@@ -77,12 +87,26 @@ object BubbleSelector {
 
     private fun isLight(color: Int) = Color.alpha(color) >= 250 && minOf(Color.red(color), Color.green(color), Color.blue(color)) >= 175
 
-    private fun selectAt(pixels: IntArray, w: Int, h: Int, x: Int, y: Int): SelectionResult {
+    private fun selectThroughSmallGap(pixels: IntArray, w: Int, h: Int, x: Int, y: Int): SelectionResult {
+        val cw = minOf(w, 1024); val ch = minOf(h, 1024)
+        val left = (x - cw / 2).coerceIn(0, w - cw); val top = (y - ch / 2).coerceIn(0, h - ch)
+        val crop = IntArray(cw * ch) { pixels[(top + it / cw) * w + left + it % cw] }
+        return when (val result = selectAt(crop, cw, ch, x - left, y - top, seal = 2)) {
+            is SelectionResult.Selected -> SelectionResult.Selected(result.region.copy(left = result.region.left + left, top = result.region.top + top))
+            is SelectionResult.Rejected -> result
+        }
+    }
+
+    private fun selectAt(pixels: IntArray, w: Int, h: Int, x: Int, y: Int, seal: Int = 0): SelectionResult {
         fun reject(message: String) = SelectionResult.Rejected(message)
         val seed = pixels[y * w + x]
         if (!isLight(seed)) {
             return reject("Tap a plain, light bubble. Colored panels and text over artwork need a different cleanup method, which is not available yet.")
         }
+        // Erosion closes only very narrow background leaks through a broken outline.
+        // The accepted interior stays inset; source border pixels are never repainted.
+        val allowed = if (seal > 0) PixelMask(w, h, BooleanArray(pixels.size) { distance(pixels[it], seed) <= 18 && Color.alpha(pixels[it]) >= 250 }).inset(seal) else null
+        if (allowed != null && !allowed[x, y]) return reject("Try an empty spot farther inside this bubble.")
         val cap = min(pixels.size, 900_000)
         val queue = IntArray(cap)
         val visited = BooleanArray(pixels.size)
@@ -93,7 +117,7 @@ object BubbleSelector {
         var left = x; var right = x; var top = y; var bottom = y
         var edge = false
         fun add(index: Int): Boolean {
-            if (visited[index] || distance(pixels[index], seed) > 18 || Color.alpha(pixels[index]) < 250) return true
+            if (visited[index] || distance(pixels[index], seed) > 18 || Color.alpha(pixels[index]) < 250 || allowed != null && !allowed[index % w, index / w]) return true
             if (tail == cap) return false
             visited[index] = true
             queue[tail++] = index
@@ -103,16 +127,16 @@ object BubbleSelector {
             val i = queue[head++]
             val xx = i % w; val yy = i / w
             left = min(left, xx); right = max(right, xx); top = min(top, yy); bottom = max(bottom, yy)
-            if (xx == 0 || yy == 0 || xx == w - 1 || yy == h - 1) edge = true
+            if (xx <= seal || yy <= seal || xx >= w - 1 - seal || yy >= h - 1 - seal) edge = true
             if ((xx > 0 && !add(i - 1)) || (xx < w - 1 && !add(i + 1)) ||
                 (yy > 0 && !add(i - w)) || (yy < h - 1 && !add(i + w))) {
-                return reject("This area is too large. Choose a smaller, enclosed speech bubble.")
+                return SelectionResult.Rejected("This area is too large. Choose a smaller, enclosed speech bubble.", retryOutline = seal == 0)
             }
         }
-        if (edge) return reject("This area reaches the image edge. Choose a bubble with a complete outline.")
+        if (edge) return SelectionResult.Rejected("The detected background connects to the page edge. Try an empty spot inside another part of the bubble; its outline may be open or clipped.", retryOutline = seal == 0)
         val cw = right - left + 1; val ch = bottom - top + 1
         if (cw < 16 || ch < 16 || tail < 80) return SelectionResult.Rejected("There is too little bubble background at this image resolution. Try an empty area beside the letters, or a higher-quality source image.", retryNearby = true)
-        if (cw.toLong() * ch > 900_000) return reject("This area is too large. Choose a smaller, enclosed speech bubble.")
+        if (cw.toLong() * ch > 900_000) return SelectionResult.Rejected("This area is too large. Choose a smaller, enclosed speech bubble.", retryOutline = seal == 0)
 
         // The connected background excludes lettering. Fill enclosed holes to recover the interior.
         val background = BooleanArray(cw * ch) { visited[(top + it / cw) * w + left + it % cw] }

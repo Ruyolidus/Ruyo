@@ -3,6 +3,7 @@ package com.ruyo.ai
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import com.ruyo.data.PagePreparation
 import com.ruyo.data.LocalBookStore
 import com.ruyo.data.OpenBook
 import com.ruyo.reader.*
@@ -83,7 +84,10 @@ class PageTranslationPipeline(
     }
     private val replies = mutableMapOf<String, String>()
     suspend fun process(page: OpenBook, settings: TranslationSettings, keepGoing: () -> Boolean, status: (String) -> Unit,
-        changed: suspend () -> Unit): String? {
+        changed: suspend () -> Unit): String? = prepare(page, settings, keepGoing, status, changed)?.message
+
+    suspend fun prepare(page: OpenBook, settings: TranslationSettings, keepGoing: () -> Boolean, status: (String) -> Unit,
+        changed: suspend () -> Unit): PagePreparation? {
         if (!keepGoing()) return null
         val sourceKey = page.book.id + ":" + page.page.id + ":" + settings.script.name
         val lines = lineCache[sourceKey] ?: run {
@@ -144,10 +148,13 @@ class PageTranslationPipeline(
             }
             if (saved) changed()
         }
-        return when {
-            groups.all { it.bubbles.isEmpty() } -> "No supported dialogue bubbles found. Tap a bubble to edit."
-            skipped > 0 -> "Saved " + count + " translations · " + skipped + " areas need manual editing"
-            else -> "Dialogue ready · Tap a bubble to edit"
+        val uncovered = lines.count { line -> existing.none { it.languageTag == settings.language && it.region.contains(line.x, line.y) } }
+        val review = skipped > 0 || uncovered > 0
+        val note = when {
+            lines.isEmpty() -> "No dialogue detected. Check the original page."
+            review -> "Some lettering needs review; unsupported areas keep their original pixels."
+            else -> "Detected dialogue is ready."
         }
+        return PagePreparation(note, review)
     }
 }

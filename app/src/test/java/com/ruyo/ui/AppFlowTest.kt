@@ -461,6 +461,70 @@ class AppFlowTest {
         compose.onNodeWithContentDescription("Close lesson").performClick()
     }
 
+    @Test fun importedChaptersPrepareCompletelyResumeAndNavigateWithinTheirSeries() {
+        val source = android.graphics.Bitmap.createBitmap(320, 440, android.graphics.Bitmap.Config.ARGB_8888)
+        source.eraseColor(android.graphics.Color.DKGRAY)
+        android.graphics.Canvas(source).apply {
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.WHITE }
+            drawOval(40f, 35f, 280f, 220f, paint)
+            paint.color = android.graphics.Color.BLACK; paint.textSize = 24f; paint.textAlign = android.graphics.Paint.Align.CENTER
+            drawText("Wait!", 160f, 135f, paint)
+        }
+        val store = LocalBookStore(context)
+        val second = store.addBitmap("Chapter two", source)
+        val files = (1..2).map { index -> File(context.cacheDir, "bulk-page-$index.png").apply { outputStream().use { source.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) } } }
+        var calls = 0
+        val ocr = object : OcrService {
+            override suspend fun recognize(source: android.graphics.Bitmap, region: com.ruyo.reader.BubbleRegion, script: OcrScript) = "Wait!"
+            override suspend fun lines(source: android.graphics.Bitmap, script: OcrScript) = listOf(OcrLine("Wait!", 110, 110, 210, 140))
+        }
+        val model = RuyoModel(context, TestProfiles(), ocr, TranslationService { _, _, _ ->
+            calls++; if (calls == 2) throw TranslationFailure("Fixture interruption")
+            "待って！"
+        })
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        compose.runOnIdle { model.createSeries("The journey") }
+        awaitTag("series-screen"); awaitState { !model.busy }
+        val seriesId = model.activeSeriesId!!
+        compose.runOnIdle { model.importFiles(files.map { Uri.fromFile(it) }) }
+        awaitTag("import-review"); awaitState { !model.busy }
+        assertEquals(seriesId, model.importing!!.seriesId)
+        assertTrue(model.importing!!.translateBeforeReading)
+        compose.onNodeWithTag("save-chapter").performClick()
+        awaitTag("chapter-preparation")
+        awaitState { !model.preparationRunning && model.preparationError != null }
+        assertEquals(1, model.preparationReports.size)
+        capture("chapter-preparation-paused")
+        compose.onNodeWithTag("resume-preparation").performClick()
+        awaitState { !model.preparationRunning && model.preparationReports.size == 2 }
+        assertNull(model.preparationError); assertEquals(3, calls)
+        val book = model.chapter!!
+        assertEquals(2, LocalBookStore(context).preparation(book, "ja:LATIN").size)
+        assertTrue(book.pages.all { store.openPage(book, it).edits.size == 1 })
+        compose.onNodeWithTag("read-prepared-chapter").performClick()
+        awaitTag("book-reader"); awaitState { !model.busy }
+        compose.onNodeWithTag("show-original").assertIsDisplayed().performClick()
+        assertFalse(model.japanese)
+        compose.onNodeWithTag("show-japanese").assertIsDisplayed().performClick()
+        assertTrue(model.japanese)
+        compose.runOnIdle { model.seriesStore.assign(second.id, seriesId); model.refresh() }
+        awaitState { !model.busy && model.neighbor(1)?.id == second.id }
+        capture("series-reader")
+        compose.onNodeWithTag("next-chapter").performClick()
+        awaitState { !model.busy && model.chapter?.id == second.id }
+        compose.onNodeWithTag("previous-chapter").performClick()
+        awaitState { !model.busy && model.chapter?.id == book.id }
+        assertEquals(3, calls)
+        compose.runOnIdle { model.leaveReader() }
+        awaitTag("series-screen")
+        capture("series-chapters")
+        compose.runOnIdle { model.moveSeriesChapter(second.id, -1) }
+        awaitState { !model.busy && model.orderedChapters(seriesId).first().id == second.id }
+        assertEquals(listOf(second.id, book.id), com.ruyo.data.SeriesStore(context).list().first().chapters)
+        source.recycle()
+    }
+
     private class TestProfiles : ProfileStore {
         private var entries = listOf(ProviderSecret(ProviderProfile(name = "Test profile", kind = ProviderKind.OPENAI, baseUrl = "https://api.openai.com/v1", model = "test-model", hasKey = true), "fixture-only"))
         override fun list() = entries.map { it.profile }

@@ -22,6 +22,26 @@ import java.io.File
 class BubbleEditorTest {
     @Before fun clearFiles() { File(RuntimeEnvironment.getApplication().filesDir, "books").deleteRecursively() }
 
+    @Test fun narrowOutlineGapsDoNotTurnInteriorTapsIntoPageEdgeSelections() {
+        val source = android.graphics.Bitmap.createBitmap(240, 240, android.graphics.Bitmap.Config.ARGB_8888)
+        source.eraseColor(android.graphics.Color.WHITE)
+        val canvas = android.graphics.Canvas(source)
+        val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK; style = android.graphics.Paint.Style.STROKE; strokeWidth = 4f }
+        canvas.drawCircle(120f, 120f, 90f, paint)
+        paint.style = android.graphics.Paint.Style.FILL; paint.color = android.graphics.Color.WHITE
+        canvas.drawRect(119f, 25f, 121f, 36f, paint)
+        paint.color = android.graphics.Color.BLACK
+        canvas.drawRect(100f, 110f, 140f, 118f, paint)
+        val before = source.copy(source.config!!, false)
+        val selected = BubbleSelector.select(source, 120, 150)
+        assertTrue(selected is SelectionResult.Selected)
+        val region = (selected as SelectionResult.Selected).region
+        assertTrue(region.contains(120, 150)); assertFalse(region.contains(10, 10))
+        assertTrue(region.width < 180 && region.height < 180)
+        assertTrue(BubbleSelector.select(source, 10, 10) is SelectionResult.Rejected)
+        assertTrue(source.sameAs(before)); source.recycle(); before.recycle()
+    }
+
     @Test fun tapsOnPaleLetterEdgesAndWhiteCountersFindTheEnclosingBubble() {
         val source = android.graphics.Bitmap.createBitmap(240, 240, android.graphics.Bitmap.Config.ARGB_8888)
         source.eraseColor(android.graphics.Color.DKGRAY)
