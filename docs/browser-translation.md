@@ -1,17 +1,18 @@
 # Browser translation: implemented preview and next stages
 
-Status: version 0.4.0 implements automatic editor recognition/translation/preview,
+Status: version 0.4.1 implements automatic editor recognition/translation/preview,
 secure provider profiles, independent joined-bubble areas, and translation as you
 scroll in local chapters and an in-app website reading mode. Direct replacement
 inside website HTML remains future work.
 
 ## Current reader behavior
 
-Open a chapter in Ruyo's HTTPS browser, expose any lazy images by scrolling, and
-choose **Read**. This enters a native reading view inside the app without importing
+Open a chapter in Ruyo's HTTPS browser and choose **Read**. The WebView remains
+attached beneath the native reader and is advanced near the current reading position;
+a foreground discovery loop incorporates new images while retaining previous ones. This enters a native reading view inside the app without importing
 the chapter into the library. The collapsed address control remains in the browser.
-The reading view shows Original/Translated, compact translation controls, and the
-chapter images. Tap any supported bubble to open the automatic editor; Save returns
+A small floating control opens a sheet containing Original/Translated, language,
+source script, provider, and minimal-reader controls. Tap any supported bubble to open the automatic editor; Save returns
 to the stored page/offset. Existing text, serif/sans/condensed/monospace, bold/italic,
 size, padding, and cleanup corrections use the same editor as local pages.
 

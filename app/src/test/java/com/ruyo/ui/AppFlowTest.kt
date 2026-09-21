@@ -3,6 +3,8 @@ package com.ruyo.ui
 import android.graphics.BitmapFactory
 import android.net.Uri
 import com.ruyo.ai.*
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -373,14 +375,29 @@ class AppFlowTest {
         compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(0)
         awaitState { model.webPosition.first == 0 }
         capture("web-reader-translated")
+        val normalHeight = compose.onNodeWithTag("web-reader").fetchSemanticsNode().boundsInRoot.height
+        compose.onNodeWithContentDescription("Hide reader toolbar").performClick()
+        compose.waitForIdle()
+        assertTrue(compose.onNodeWithTag("web-reader").fetchSemanticsNode().boundsInRoot.height > normalHeight)
+        capture("web-reader-minimal")
+        compose.runOnIdle { model.readerImmersive = false }
         assertEquals(3, calls)
+        val sessionId = model.webReading!!.id
+        val expanded = chapter.copy(images = chapter.images + WebImage("https://example.com/image-3.png", "Image 3", 600, 1100))
+        compose.runOnIdle { model.viewModelScope.launch { model.acceptWebDiscovery(sessionId, expanded, emptyMap()) } }
+        awaitState { model.webReading!!.images.size == 4 }
+        compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(3)
+        awaitState { model.scrollTranslation?.notes?.containsKey(3) == true }
+        assertEquals(4, calls)
+        compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(0)
+        awaitState { model.webPosition.first == 0 }
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, height * .164f)) }
         awaitTag("bubble-editor")
         awaitState { model.draft?.preview != null && !model.busy }
         assertTrue(model.draft!!.existing)
         assertEquals("serif", model.draft!!.edit.fontFamily)
         assertTrue(model.draft!!.edit.bold)
-        assertEquals(3, calls)
+        assertEquals(4, calls)
         compose.runOnIdle { model.cancelEditor() }
         awaitTag("web-reader")
         assertEquals(0, model.webPosition.first)

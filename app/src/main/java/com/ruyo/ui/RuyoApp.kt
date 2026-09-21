@@ -149,6 +149,7 @@ private fun AppContent(model: RuyoModel) {
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
             if (model.webHostActive) WebBrowserScreen(model)
+            Box(Modifier.fillMaxSize().then(if (model.route != "web") Modifier.background(MaterialTheme.colorScheme.background) else Modifier)) {
             when (model.route) {
                 "sample" -> SampleReader(model)
                 "book" -> key(model.chapter?.id) { BookReader(model) }
@@ -164,6 +165,7 @@ private fun AppContent(model: RuyoModel) {
                     "settings" -> SettingsScreen(model)
                     else -> LibraryScreen(model) { addComic = true }
                 }
+            }
             }
         }
     }
@@ -325,7 +327,7 @@ private fun SettingsScreen(model: RuyoModel) {
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.4.0 preview")
+            SettingLine("Ruyo", "0.4.1 preview")
             Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("This build includes joined bubble areas, on-device text recognition, provider-based translation, and fitted previews. Website reading mode supports editing and translation as you scroll. Generated lessons are still in development.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

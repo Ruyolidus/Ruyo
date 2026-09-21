@@ -16,7 +16,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import com.ruyo.web.LiveChapter
 import kotlinx.coroutines.delay
@@ -26,6 +25,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,6 +53,18 @@ internal fun WebBrowserScreen(model: RuyoModel) {
     var canGoBack by remember { mutableStateOf(false) }
     var clearData by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
+    val lifecycle = (LocalContext.current as? LifecycleOwner)?.lifecycle
+    DisposableEffect(web, lifecycle) {
+        val view = web
+        val observer = LifecycleEventObserver { _, event ->
+            if (view != null && view.tag != "ruyo-disposed") {
+                if (event == Lifecycle.Event.ON_STOP) { view.onPause(); view.pauseTimers() }
+                if (event == Lifecycle.Event.ON_START) { view.resumeTimers(); view.onResume() }
+            }
+        }
+        lifecycle?.addObserver(observer)
+        onDispose { lifecycle?.removeObserver(observer) }
+    }
     val addressFocus = remember { FocusRequester() }
     LaunchedEffect(model.webAddressExpanded, model.route) {
         if (model.webAddressExpanded && model.route == "web") { addressFocus.requestFocus(); keyboard?.show() }
@@ -107,7 +122,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
     }
     BackHandler(model.route == "web" && canGoBack && !model.busy) { web?.goBack() }
     BackHandler(model.route == "web" && model.webAddressExpanded && !model.busy) { model.webAddressExpanded = false }
-    Column(Modifier.fillMaxSize().imePadding().then(if (model.route == "web") Modifier.testTag("web-browser") else Modifier.alpha(0f).clearAndSetSemantics {})) {
+    Column(Modifier.fillMaxSize().imePadding().then(if (model.route == "web") Modifier.testTag("web-browser") else Modifier.clearAndSetSemantics {})) {
         // Keep native web content clipped below an opaque, independently drawn toolbar.
         if (model.webAddressExpanded && model.route == "web") Surface(Modifier.fillMaxWidth().zIndex(1f), color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -194,9 +209,12 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                         web = this
                         if (model.webUrl.isNotBlank()) runCatching { loadUrl(WebAddress.normalize(model.webUrl)) }
                     }
+                }, update = { view ->
+                    view.importantForAccessibility = if (model.route == "web") android.view.View.IMPORTANT_FOR_ACCESSIBILITY_AUTO else android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+                    if (model.route != "web") view.clearFocus()
                 }, onRelease = { view ->
                     if (web === view) web = null
-                    if (view.tag != "ruyo-disposed") { view.stopLoading(); view.webChromeClient = null; view.destroy() }
+                    if (view.tag != "ruyo-disposed") { view.stopLoading(); view.resumeTimers(); view.webChromeClient = null; view.destroy() }
                 })
             }
             if (model.webUrl.isBlank()) Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {

@@ -3,7 +3,7 @@
 An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.4.0
+## Preview 0.4.1
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
@@ -28,8 +28,9 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 - Translation while scrolling in both imported chapters and website reading mode:
   one native worker processes visible images and one ahead, saves validated swaps,
   and skips completed dialogue on revisits. Start/Pause is explicit for each session.
-- Website **Read** opens discovered chapter images directly in a temporary native
-  reader inside the app. Tap a bubble to use the same automatic editor, then return
+- Website **Read** keeps the attached website alive behind a temporary native
+  reader. It advances the website near your reading position and incorporates newly
+  loaded chapter images, including short strips in recognised chapter containers. Tap a bubble to use the same automatic editor, then return
   to the same reading position. No library import is required.
 - A compact browser address icon at the top right. Tap to expand and focus the field; successful navigation collapses it again.
 - A persistent default target language and per-edit language choices, including custom language codes. Existing Japanese edits retain their language.
@@ -50,6 +51,8 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   are shown for review; they are never silently saved as complete chapters.
 - A full-width comic reader with pinch zoom and original/Japanese switching.
 - A restrained light/dark interface with Library, Saved, and Settings navigation.
+- Reading settings live in a bottom sheet. A small floating Translate/controls pill
+  replaces stacked toolbars; **Minimal reader** hides the top bar too.
 - Tap an enclosed, light, flat bubble to select it; review and brush-correct its
   lettering mask, enter a translation, adjust its style and padding, preview, and save the replacement.
 - Small bubbles can be selected, including a tap that lands on lettering when a nearby blank seed belongs to the same interior. Rejections remain visible while selecting.
@@ -72,7 +75,8 @@ editing. Fitting failures keep the original pixels; text is never silently short
 
 Website reading mode uses the current page's HTTPS image URLs in document order.
 It is an in-app native reading view, not replacement inside the website's HTML.
-Scroll the website to expose lazy-loaded images before choosing Read. Comments and
+The live website is advanced as you approach undiscovered images. Sites requiring a
+manual interaction still need the **Website** action. Comments and
 profile images recognized by the collector are excluded. Canvas readers, iframes,
 scrambled images, protected downloads, and some lazy loaders need source adapters.
 This does not promise support for every scan site. Access restrictions are not bypassed.
@@ -119,11 +123,30 @@ Opening a website or chapter alone never sends a paid request. Opening a new bub
 with an active profile does, as does starting Translate in the reader. Only recognized
 text is sent to the native provider client; comic images and keys never enter each
 other's storage or the WebView. Failed requests stop automatic processing until an
-explicit retry. There are no automatic paid retries. Each request allows up to 4096 output
+explicit retry. Scrolling sends up to four nearby dialogue areas in one request (at most 6000 source
+characters); the editor still uses one selected area. Every returned ID must match,
+and every full text must validate. Recent page OCR and completed responses are reused
+within the pipeline. There are no automatic paid retries. Each request allows up to 4096 output
 tokens, a 128 KiB response, and a 65-second timeout. Provider/model support and pricing
 vary; no live credentials are included in CI. HTTP is restricted to localhost and
 127.0.0.1 for servers on the phone; other endpoints require HTTPS. A local server is
 a separate app/service, not an inference engine bundled into Ruyo.
+
+## Translation latency and data sent
+
+ML Kit reads the supplied image on the phone. The translation API receives only the
+recognised source strings, stable request IDs, target language, and translation
+instructions; it receives no comic bitmap, image URL, or base64 image. Up to four
+nearby bubbles share a request. Results can arrive in any order but are applied only
+to their matching IDs after the full batch validates. Repeated OCR is cached for
+three recent pages, and successful replies are reused during the same reader
+pipeline. Saved edits stay available in their normal chapter/session storage.
+
+Time includes local OCR/segmentation/fitting plus network and selected-model
+generation latency. Grouping reduces repeated requests; it does not guarantee
+instant results or a particular speed/cost on every provider. Output-token settings
+are maximum budgets, not a fixed number charged for each bubble. Live provider
+timings have not been measured with a real account.
 
 ## Install a test build
 

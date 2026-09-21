@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.4.0)
+## Current scope (0.4.1)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -139,14 +139,37 @@ switching profiles, or changing input cancels pending work. Late results cannot
 replace newer edits. OCR native task ownership lasts until completion, including
 its bitmap and single-job mutex, even when the UI request is cancelled.
 
+## Live reading and request grouping in 0.4.1
+
+Read retains the website WebView underneath an opaque native reader. A cancellable
+foreground loop advances the page in bounded viewport increments near the current
+image and periodically discovers images. This lets the site's scroll handlers and
+IntersectionObserver load more content. Newly discovered URLs are merged around
+known anchors; previously seen virtualized images are retained. Session books are
+keyed by image URL, so inserting an earlier image cannot attach an edit to another
+page. Insertions preserve the current image anchor and reset index-based scheduling;
+ordinary appends resize the scheduler without restarting an in-flight request.
+
+Short wide strips in known chapter containers are retained. Empty initial discovery
+can enter Read and wait for the site. The UI offers Website for loaders requiring
+manual interaction. Source limits remain 200 images, 40 MB per image, and a 512 MB
+session source budget. Cross-page automatic navigation is not followed from Read.
+
+The reader has a small floating translation/controls pill. Detailed controls are
+in a bottom sheet; minimal mode hides the top toolbar. Images remain full-width
+with their complete aspect ratio. Recognition sends no images to a provider.
+Native requests group up to four dialogues / 6000 characters, validate unique IDs
+and full translations, then save/compose each valid batch. Recent OCR and completed
+responses are reused. Models and network conditions still determine API latency.
+
 ## Next stages
 
 1. Decode OCR regions and visible reader tiles from archived originals. Measure
    tiny-letter recognition and memory on modest Android phones.
 2. Add ordered dialogue batches with neighboring context, region IDs, validated
    per-region responses, and persistent revision-aware caches.
-3. Add a bounded viewport scheduler and native overlays for in-browser reading.
-   Reuse the tested per-region pipeline without sending keys into page scripts.
+3. Improve source adapters for specific lazy-loading and virtualized sites. Keep
+   native reading and provider access isolated from page scripts.
 4. Generate language-aware grammar/vocabulary lessons bound to the displayed
    translation revision. Keep lesson and translation profiles independently selectable.
 5. Add manual narration regions and gradient/textured-background repair with

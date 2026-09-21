@@ -67,6 +67,40 @@ class ReadingPipelineTest {
         } finally { source.recycle(); directory.deleteRecursively() }
     }
 
+    @Test fun joinedDialogueUsesOneBatchAndRetriesReuseRecognition() = runBlocking {
+        val (source, lines) = fixture()
+        val directory = File(context.cacheDir, "batch-" + UUID.randomUUID())
+        val store = LocalBookStore(context, directory, File(directory, "staging"))
+        val profiles = Profiles()
+        var recognitions = 0; var requests = 0
+        val ocr = object : OcrService {
+            override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript) = error("Page OCR expected")
+            override suspend fun lines(source: Bitmap, script: OcrScript): List<OcrLine> { recognitions++; return lines }
+        }
+        val service = object : TranslationService {
+            override suspend fun translate(secret: ProviderSecret, source: String, target: String) = error("A joined pair should use a batch")
+            override suspend fun translateBatch(secret: ProviderSecret, sources: List<SourceDialogue>, target: String): Map<String, String> {
+                requests++
+                assertEquals(2, sources.size)
+                if (requests == 1) error("Temporary provider failure")
+                return sources.associate { it.id to if (it.text == "Part one") "First." else "Second." }
+            }
+        }
+        try {
+            val book = store.addBitmap("Batched dialogue", source)
+            val pipeline = PageTranslationPipeline(store, ocr, profiles, service)
+            val settings = TranslationSettings(profiles.profile.id, "en", OcrScript.LATIN)
+            assertTrue(runCatching { pipeline.process(store.open(book), settings, { true }, {}, {}) }.isFailure)
+            assertTrue(store.open(book).edits.isEmpty())
+            pipeline.process(store.open(book), settings, { true }, {}, {})
+            assertEquals(1, recognitions)
+            assertEquals(2, requests)
+            assertEquals(2, store.open(book).edits.size)
+            pipeline.process(store.open(book), settings, { true }, {}, {})
+            assertEquals(2, requests)
+        } finally { directory.deleteRecursively(); source.recycle() }
+    }
+
     @Test fun incompleteLinesAndArtworkAreNotSentForTranslation() = runBlocking {
         val (source, _) = fixture()
         try {
@@ -105,6 +139,11 @@ class ReadingPipelineTest {
             session.store.saveEdit(page.book.id, page.original, BubbleEdit(region = parts.first(), japanese = "Saved.", margin = 5, languageTag = "en"), page.page.id)
             session.changed()
             assertEquals("Saved.", session.load(0).edits.single().japanese)
+            assertEquals(1, downloads)
+            val oldId = session.load(0).book.id
+            session.updateImages(listOf(WebImage("https://example.com/new.png", "Newly loaded earlier image", 352, 352)) + session.images)
+            assertEquals(oldId, session.load(1).book.id)
+            assertEquals("Saved.", session.load(1).edits.single().japanese)
             assertEquals(1, downloads)
             assertEquals(library, LocalBookStore(context).list().map { it.id })
         } finally { session.close(); bitmap.recycle() }

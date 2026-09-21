@@ -112,6 +112,37 @@ class ProviderTest {
         assertTrue(runCatching { TranslationClient.parse(ProviderKind.OPENAI, JSONObject().put("choices", JSONArray().put(unsupported)).toString()) }.isFailure)
     }
 
+    @Test fun batchBodiesContainOnlyTextAndIdsForEveryProvider() {
+        for (kind in ProviderKind.entries) {
+            val request = TranslationClient.batchRequest(ProviderSecret(profile(kind), testKey),
+                listOf(SourceDialogue("a", "Hello"), SourceDialogue("b", "Wait")), "ja")
+            val body = JSONObject(request.body)
+            val input = when (kind) {
+                ProviderKind.OPENAI, ProviderKind.COMPATIBLE -> body.getJSONArray("messages").getJSONObject(1).getString("content")
+                ProviderKind.CLAUDE -> body.getJSONArray("messages").getJSONObject(0).getString("content")
+                ProviderKind.GEMINI -> body.getJSONArray("contents").getJSONObject(0).getJSONArray("parts").getJSONObject(0).getString("text")
+            }
+            assertEquals(2, JSONObject(input).getJSONArray("dialogue").length())
+            assertFalse(request.body.contains(testKey))
+            assertFalse(request.body.contains("image_url"))
+            assertFalse(request.body.contains("inlineData"))
+        }
+    }
+
+    @Test fun batchesMatchByIdAndRejectMissingDuplicateOrOversizedDialogue() {
+        fun response(items: JSONArray): String = JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop")
+            .put("message", JSONObject().put("content", JSONObject().put("translations", items).toString())))).toString()
+        fun item(id: String, text: String) = JSONObject().put("id", id).put("translation", text)
+        val valid = JSONArray().put(item("b", "Second")).put(item("a", "First"))
+        assertEquals(mapOf("a" to "First", "b" to "Second"), TranslationClient.parseBatch(ProviderKind.COMPATIBLE, response(valid), setOf("a", "b")))
+        listOf(JSONArray().put(item("a", "First")), JSONArray().put(item("a", "First")).put(item("a", "Duplicate")),
+            JSONArray().put(item("a", "First")).put(item("unknown", "Other")),
+            JSONArray().put(item("a", "First")).put(item("b", "x".repeat(513)))).forEach {
+            assertTrue(runCatching { TranslationClient.parseBatch(ProviderKind.OPENAI, response(it), setOf("a", "b")) }.isFailure)
+        }
+        assertTrue(runCatching { TranslationClient.batchRequest(ProviderSecret(profile(), testKey), (0..4).map { SourceDialogue(it.toString(), "Text") }, "ja") }.isFailure)
+    }
+
     @Test fun transportNeverFollowsRedirectsOrLeaksErrorBody() = runBlocking {
         val fake = FakeHttp(302, testKey)
         var attempts = 0
