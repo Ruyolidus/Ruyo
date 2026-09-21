@@ -25,7 +25,7 @@ object WebAddress {
 }
 
 data class WebImage(val url: String, val name: String, val width: Int, val height: Int, val excludedReason: String? = null, val chapterImage: Boolean = false) {
-    val likelyPage: Boolean get() = excludedReason == null && (chapterImage || width >= 300 && height >= 120 || width == 0 || height == 0)
+    val likelyPage: Boolean get() = excludedReason == null && (chapterImage || width >= 300 && height >= 250 || width == 0 || height == 0)
 }
 data class WebChapter(val url: String, val title: String, val images: List<WebImage>)
 

@@ -354,8 +354,13 @@ class AppFlowTest {
         awaitTag("web-page-0")
         assertEquals(0, calls)
         assertTrue(LocalBookStore(context).list().isEmpty())
-        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, height * .164f)) }
-        awaitTag("bubble-editor")
+        awaitState { !model.busy }
+        capture("web-reader-before-edit")
+        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
+        try { awaitTag("bubble-editor") } catch (error: Exception) {
+            capture("web-reader-tap-failure")
+            throw AssertionError("Web edit: route=" + model.route + " busy=" + model.busy + " selection=" + model.selectionError + " message=" + model.message, error)
+        }
         awaitState { model.draft?.preview != null && !model.busy && model.aiStatus == null }
         assertEquals(1, calls)
         compose.runOnIdle { model.changeFont("serif") }
@@ -391,7 +396,7 @@ class AppFlowTest {
         assertEquals(4, calls)
         compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(0)
         awaitState { model.webPosition.first == 0 }
-        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, height * .164f)) }
+        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
         awaitTag("bubble-editor")
         awaitState { model.draft?.preview != null && !model.busy }
         assertTrue(model.draft!!.existing)
