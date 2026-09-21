@@ -115,7 +115,18 @@ class ReadingPipelineTest {
         Canvas(source).drawText("Missed line", 110f, 151f, paint)
         try {
             val detected = AutoBubbleDetector.detect(source, lines).flatMap { it.bubbles }
-            assertFalse(detected.any { it.source == "Part one" })
+            // The whole-bubble path must reject incomplete OCR, but a smaller
+            // validated text region can translate the recognized line safely.
+            val first = detected.single { it.source == "Part one" }
+            assertNotNull(first.region.backgroundSurface)
+            val composite = BubbleEditRenderer.composite(source, detected.map {
+                BubbleEdit(region = it.region, japanese = "Ready.", margin = 3, languageTag = "en")
+            })
+            for (y in 133..157) for (x in 50..170) {
+                assertFalse(first.region.contains(x, y))
+                assertEquals("Unrecognized lettering changed at $x,$y", source.getPixel(x, y), composite.getPixel(x, y))
+            }
+            composite.recycle()
             assertTrue(detected.any { it.source == "Part two" })
         } finally { source.recycle() }
     }
