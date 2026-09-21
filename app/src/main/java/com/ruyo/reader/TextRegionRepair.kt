@@ -106,7 +106,7 @@ object TextRegionRepair {
                     }
                 }
             }
-            if (maxY - minY > letterHeight * 1.5 || maxX - minX > maxOf(letterHeight * 5, w * .85)) return null
+            if (maxY - minY > letterHeight * 1.5 || maxX - minX > maxOf(letterHeight * 5.0, w * .85)) return null
         }
         val ink = BooleanArray(raw.size)
         for (i in raw.indices) if (raw[i]) for (dy in -2..2) for (dx in -2..2) {
