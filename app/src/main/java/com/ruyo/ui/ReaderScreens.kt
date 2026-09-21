@@ -157,38 +157,85 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
     val sample = SampleChapter.lines.find { it.id == line.sampleId }
     var selectedTab by rememberSaveable(line.id) { mutableIntStateOf(0) }
     val isSaved = model.saved.any { it.id == line.id }
-    ModalBottomSheet(onDismissRequest = { model.lesson = null }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surface) {
+    LaunchedEffect(line, model.activeProfileId, model.foreground) {
+        if (sample == null && model.foreground) model.explainLesson()
+    }
+    ModalBottomSheet(onDismissRequest = model::closeLesson, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().testTag("study-sheet").navigationBarsPadding()) {
-            Column(Modifier.padding(horizontal = 24.dp)) {
-                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text(line.source, Modifier.weight(1f), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    IconButton(onClick = { model.lesson = null }, modifier = Modifier.size(40.dp)) { Icon(AppIcons.Close, "Close lesson", Modifier.size(20.dp)) }
-                }
-                Text(line.japanese, fontSize = 26.sp, lineHeight = 38.sp, modifier = Modifier.padding(top = 8.dp, bottom = 8.dp))
-                if (sample != null) Text(sample.reading, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Study dialogue", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                IconButton(onClick = model::closeLesson) { Icon(AppIcons.Close, "Close lesson", Modifier.size(20.dp)) }
             }
-            Spacer(Modifier.height(20.dp))
-            if (sample != null) {
-                TabRow(selectedTabIndex = selectedTab, containerColor = MaterialTheme.colorScheme.surface) {
-                    listOf("Meaning", "Grammar", "Words").forEachIndexed { index, title -> Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title) }) }
+            TabRow(selectedTabIndex = selectedTab, containerColor = MaterialTheme.colorScheme.surface) {
+                (if (sample == null) listOf("Meaning", "Grammar", "Words", "Practice") else listOf("Meaning", "Grammar", "Words")).forEachIndexed { index, title ->
+                    Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(title, maxLines = 1, style = MaterialTheme.typography.labelMedium) })
                 }
-                Column(Modifier.fillMaxWidth().heightIn(min = 180.dp, max = 280.dp).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            }
+            LazyColumn(Modifier.fillMaxWidth().weight(1f, fill = false).heightIn(min = 180.dp).testTag("lesson-content"),
+                contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                item {
+                    Text(line.source, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(line.japanese, fontSize = 24.sp, lineHeight = 36.sp, modifier = Modifier.padding(top = 8.dp))
+                    val reading = sample?.reading ?: model.explanation?.reading
+                    if (!reading.isNullOrBlank()) Text(reading, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (sample != null) {
                     when (selectedTab) {
-                        0 -> {
-                            Text(sample.meaning, style = MaterialTheme.typography.bodyLarge)
-                            Column { SectionLabel("Example"); Text(sample.example, style = MaterialTheme.typography.bodyMedium) }
+                        0 -> item { Text(sample.meaning); Spacer(Modifier.height(16.dp)); SectionLabel("Example"); Text(sample.example) }
+                        1 -> item { Text(sample.grammar) }
+                        else -> sample.vocabulary.forEach { (word, meaning) -> item { Text(word, style = MaterialTheme.typography.titleMedium); Text(meaning) } }
+                    }
+                } else {
+                    val value = model.explanation
+                    if (value == null) item {
+                        if (model.explanationBusy) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                                Text("Preparing your explanation…", Modifier.padding(start = 12.dp))
+                            }
+                        } else {
+                            Text(model.explanationError ?: "Explain this dialogue with your selected AI provider.")
+                            TextButton(onClick = { if (model.activeProfile == null) model.editProfiles() else model.explainLesson() }, modifier = Modifier.testTag("retry-lesson")) {
+                                Text(if (model.activeProfile == null) "Choose AI provider" else "Retry explanation")
+                            }
                         }
-                        1 -> Text(sample.grammar, style = MaterialTheme.typography.bodyLarge)
-                        else -> sample.vocabulary.forEach { (word, meaning) -> Column { Text(word, style = MaterialTheme.typography.titleMedium); Text(meaning, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) } }
+                        Text("Only this dialogue text is sent. Lessons are cached on this device.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        item { Text("AI explanation · English", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        when (selectedTab) {
+                            0 -> {
+                                item { Text(value.meaning, modifier = Modifier.testTag("lesson-meaning")); Spacer(Modifier.height(16.dp)); SectionLabel("Examples") }
+                                value.examples.forEach { point -> item { Text(point.text, style = MaterialTheme.typography.titleMedium); Text(point.explanation) } }
+                            }
+                            1 -> value.grammar.forEach { point -> item { Text(point.text, style = MaterialTheme.typography.titleMedium); Text(point.explanation) } }
+                            2 -> {
+                                if (line.languageTag.startsWith("ja")) item { Text("JLPT levels are approximate AI estimates.", style = MaterialTheme.typography.bodySmall) }
+                                value.vocabulary.forEach { word -> item {
+                                    Text(word.word, style = MaterialTheme.typography.titleMedium)
+                                    if (word.reading.isNotBlank()) Text(word.reading, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(word.meaning)
+                                    if (line.languageTag.startsWith("ja") && word.level.isNotBlank()) Text("Approx. " + word.level, style = MaterialTheme.typography.labelSmall)
+                                } }
+                            }
+                            else -> value.exercises.forEachIndexed { index, exercise -> item {
+                                var revealed by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
+                                Text("Exercise " + (index + 1), style = MaterialTheme.typography.labelSmall)
+                                Text(exercise.question, style = MaterialTheme.typography.bodyLarge)
+                                TextButton(onClick = { revealed = !revealed }) { Text(if (revealed) "Hide answer" else "Show answer") }
+                                if (revealed) { Text(exercise.answer, style = MaterialTheme.typography.titleMedium); Text(exercise.explanation) }
+                            } }
+                        }
                     }
                 }
-            } else Column(Modifier.padding(24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                SectionLabel("Translation · " + com.ruyo.reader.TextLanguages.label(line.languageTag))
-                Text("This is the text shown in this bubble for this bubble. You can save it now; AI grammar and vocabulary explanations are coming in a later build.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-            Button(onClick = { model.toggleSaved(line) }, enabled = !model.busy, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp).height(48.dp).testTag("save-sentence")) {
-                Icon(if (isSaved) AppIcons.Check else AppIcons.Bookmark, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text(if (isSaved) "Saved · remove" else "Save sentence")
+            Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (model.lessonEditable) OutlinedButton(onClick = model::editLesson, enabled = !model.busy, modifier = Modifier.height(48.dp).testTag("edit-lesson")) {
+                    Icon(AppIcons.Edit, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Edit")
+                }
+                Button(onClick = { model.toggleSaved(line) }, enabled = !model.busy, modifier = Modifier.weight(1f).height(48.dp).testTag("save-sentence")) {
+                    Icon(if (isSaved) AppIcons.Check else AppIcons.Bookmark, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text(if (isSaved) "Saved · remove" else "Save sentence")
+                }
             }
         }
     }

@@ -37,6 +37,7 @@ class AppFlowTest {
 
     @Before fun resetState() {
         context.filesDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
+        File(context.cacheDir, "lessons-v1").deleteRecursively()
         context.getSharedPreferences("settings", 0).edit().clear().commit()
     }
 
@@ -338,6 +339,7 @@ class AppFlowTest {
         }
         val encoded = java.io.ByteArrayOutputStream().also { source.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
         var calls = 0
+        var lessons = 0
         val ocr = object : OcrService {
             override suspend fun recognize(source: android.graphics.Bitmap, region: com.ruyo.reader.BubbleRegion, script: OcrScript) = "Wait!"
             override suspend fun lines(source: android.graphics.Bitmap, script: OcrScript) = listOf(OcrLine("Wait!", 250, 143, 350, 185))
@@ -345,6 +347,11 @@ class AppFlowTest {
         val model = RuyoModel(context, TestProfiles(), ocr, TranslationService { _, _, _ -> calls++; "待って！" },
             webSessionFactory = { app, chapter, cookies, agent ->
                 com.ruyo.web.WebReadingSession(app, chapter, cookies, agent) { _, check -> check(); java.io.ByteArrayInputStream(encoded) }
+            }, explanationService = ExplanationService { _, text, language ->
+                assertEquals("待って！", text); assertEquals("ja", language); lessons++
+                AiLesson("Wait! A casual request.", "matte", listOf(LessonPoint("待って", "The te-form makes a casual request.")),
+                    listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonPoint("少し待って。", "Wait a little.")),
+                    listOf(LessonExercise("What is the dictionary form of 待って?", "待つ", "待って is the te-form of 待つ.")))
             })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
@@ -357,7 +364,7 @@ class AppFlowTest {
         awaitState { !model.busy }
         capture("web-reader-before-edit")
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
-        try { awaitTag("bubble-editor") } catch (error: Exception) {
+        try { awaitTag("bubble-editor") } catch (error: Throwable) {
             capture("web-reader-tap-failure")
             throw AssertionError("Web edit: route=" + model.route + " busy=" + model.busy + " selection=" + model.selectionError + " message=" + model.message, error)
         }
@@ -397,6 +404,22 @@ class AppFlowTest {
         compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(0)
         awaitState { model.webPosition.first == 0 }
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
+        awaitTag("study-sheet")
+        awaitState { model.explanation != null && !model.explanationBusy }
+        assertEquals(1, lessons)
+        compose.onNodeWithText("Grammar").performClick()
+        compose.onNodeWithText("The te-form makes a casual request.").assertExists()
+        capture("ai-lesson", "study-sheet")
+        compose.onNodeWithText("Practice").performClick()
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("Show answer"))
+        compose.onNodeWithText("Show answer").performClick()
+        compose.onNodeWithText("待つ").assertExists()
+        compose.onNodeWithContentDescription("Close lesson").performClick()
+        compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
+        awaitTag("study-sheet")
+        awaitState { model.explanation != null && !model.explanationBusy }
+        assertEquals(1, lessons)
+        compose.onNodeWithTag("edit-lesson").performClick()
         awaitTag("bubble-editor")
         awaitState { model.draft?.preview != null && !model.busy }
         assertTrue(model.draft!!.existing)
@@ -432,3 +455,4 @@ class AppFlowTest {
         bitmap.recycle()
     }
 }
+

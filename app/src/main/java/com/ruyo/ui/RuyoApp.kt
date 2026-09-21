@@ -284,7 +284,7 @@ private fun SavedScreen(model: RuyoModel) {
     } else LazyColumn(Modifier.fillMaxSize().testTag("saved-screen"), contentPadding = PaddingValues(vertical = 12.dp)) {
         item { Text("${model.saved.size} ${if (model.saved.size == 1) "sentence" else "sentences"}", Modifier.padding(horizontal = 20.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(model.saved, key = { it.id }) { line ->
-            Column(Modifier.fillMaxWidth().clickable { model.lesson = line }.padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Column(Modifier.fillMaxWidth().clickable { model.showLesson(line) }.padding(horizontal = 20.dp, vertical = 18.dp)) {
                 Text(line.japanese, fontSize = 20.sp, lineHeight = 30.sp)
                 Text(line.source, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

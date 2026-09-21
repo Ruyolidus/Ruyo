@@ -37,6 +37,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private val ocrService: OcrService = BubbleOcr(),
     private val translationService: TranslationService = TranslationClient(),
     private val webSessionFactory: (Application, WebChapter, Map<String, String>, String) -> WebReadingSession = { app, source, cookies, agent -> WebReadingSession(app, source, cookies, agent) },
+    private val explanationService: ExplanationService = ExplanationClient(),
 ) : AndroidViewModel(application) {
     val store = LocalBookStore(application)
     val pageLoader = ReaderPageLoader(store)
@@ -57,7 +58,15 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var areaSelection by mutableStateOf<AreaSelection?>(null); private set
     var importing by mutableStateOf<ChapterImport?>(null); private set
     var importProgress by mutableStateOf<ImportProgress?>(null); private set
-    var lesson by mutableStateOf<SavedLine?>(null)
+    var lesson by mutableStateOf<SavedLine?>(null); private set
+    var explanation by mutableStateOf<AiLesson?>(null); private set
+    var explanationBusy by mutableStateOf(false); private set
+    var explanationError by mutableStateOf<String?>(null); private set
+    var lessonEditable by mutableStateOf(false); private set
+    private var lessonEdit: (() -> Unit)? = null
+    private var lessonOperation: Job? = null
+    private var lessonGeneration = 0L
+    private val lessonCache = LessonCache(application)
     var busy by mutableStateOf(false); private set
     var ready by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null)
@@ -70,7 +79,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var webLoadStatus by mutableStateOf("Watching for more chapter images…"); private set
     var webVisible by mutableStateOf<List<Int>>(emptyList()); private set
     var webFraction by mutableStateOf(0f); private set
-    fun appForeground(value: Boolean) { foreground = value; if (!value) pauseScrolling() }
+    fun appForeground(value: Boolean) { foreground = value; if (!value) { pauseScrolling(); cancelExplanation() } }
     fun webViewport(indices: List<Int>, fraction: Float) { webVisible = indices; webFraction = fraction }
     suspend fun acceptWebDiscovery(sessionId: String, source: WebChapter, cookies: Map<String, String>) {
         val session = webReading ?: return
@@ -116,7 +125,11 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     fun readWebsite(source: WebChapter, cookies: Map<String, String>, userAgent: String) = task {
         scrollTranslation?.pause()?.join()
         val previous = webReading
-        if (previous != null && previous.chapter.url == source.url && previous.images.map { it.url } == source.images.map { it.url }) {
+        if (previous != null && previous.chapter.url == source.url) {
+            val anchor = previous.images.getOrNull(webPosition.first)?.url
+            previous.updateCookies(cookies)
+            previous.updateImages(LiveChapter.merge(previous.images, source.images))
+            if (anchor != null) webPosition = previous.images.indexOfFirst { it.url == anchor }.coerceAtLeast(0) to webPosition.second
             route = "webread"; readerImmersive = false; japanese = true; selectionError = null
             configureScroll(previous.store, previous.images.size, { previous.load(it) }, { previous.changed() })
             return@task
@@ -170,7 +183,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun changeTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun home() {
-        cancelAi(); pauseScrolling(); webHostActive = false; readerImmersive = false; areaSelection = null; editorWebIndex = null
+        closeLesson(); cancelAi(); pauseScrolling(); webHostActive = false; readerImmersive = false; areaSelection = null; editorWebIndex = null
         flushPosition()
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
@@ -439,10 +452,65 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun studySample(id: String) {
         val line = SampleChapter.lines.first { it.id == id }
-        lesson = SavedLine("sample:$id", line.japanese, "Before the rain", id)
+        showLesson(SavedLine("sample:$id", line.japanese, "Before the rain", id))
     }
-    fun studyEdit(edit: BubbleEdit, page: OpenBook? = opened) {
-        lesson = SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter", languageTag = edit.languageTag)
+    fun showLesson(line: SavedLine) {
+        closeLesson(); lesson = line
+    }
+    fun closeLesson() {
+        cancelExplanation(); lesson = null; explanation = null; explanationError = null
+        lessonEdit = null; lessonEditable = false
+    }
+    fun studyEdit(edit: BubbleEdit, page: OpenBook? = opened, webIndex: Int? = null) {
+        showLesson(SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter", languageTag = edit.languageTag))
+        if (page != null) {
+            val sessionId = webReading?.id
+            val imageUrl = webIndex?.let { webReading?.images?.getOrNull(it)?.url }
+            lessonEditable = true
+            lessonEdit = { task {
+                scrollTranslation?.pause()?.join()
+                val fresh = if (webIndex != null) {
+                    val session = webReading ?: return@task
+                    require(session.id == sessionId) { "This reading session has ended." }
+                    val index = session.images.indexOfFirst { it.url == imageUrl }
+                    require(index >= 0) { "This image is no longer available." }
+                    session.changed(); editorWebIndex = index; session.load(index)
+                } else { editorWebIndex = null; pageLoader.clear(); pageLoader.load(page.book, page.page) }
+                val current = fresh.edits.firstOrNull { it.id == edit.id }
+                require(current != null) { "This translation has been removed." }
+                openEditor(fresh, current.region, current)
+            } }
+        }
+    }
+    fun editLesson() { val action = lessonEdit ?: return; closeLesson(); action() }
+    fun cancelExplanation() {
+        lessonGeneration++; lessonOperation?.cancel(); lessonOperation = null; explanationBusy = false
+    }
+    fun explainLesson() {
+        val line = lesson ?: return
+        if (line.sampleId != null || explanationBusy || explanation != null) return
+        cancelExplanation(); explanationError = null
+        val profile = activeProfile
+        if (profile == null) { explanationError = "Choose an AI provider to explain this dialogue."; return }
+        val generation = lessonGeneration
+        explanationBusy = true
+        lessonOperation = viewModelScope.launch {
+            try {
+                val key = lessonCache.key(line.japanese, line.languageTag, profile)
+                val cached = withContext(Dispatchers.IO) { lessonCache.read(key) }
+                val value = cached ?: run {
+                    val secret = withContext(Dispatchers.IO) { profileStore.get(profile.id) }
+                    explanationService.explain(secret, line.japanese, line.languageTag)
+                }
+                ensureActive()
+                if (generation != lessonGeneration || lesson != line || activeProfileId != profile.id) return@launch
+                explanation = value
+                if (cached == null) withContext(Dispatchers.IO) { runCatching { lessonCache.write(key, value) } }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (generation == lessonGeneration) explanationError = (error as? TranslationFailure)?.message ?: "Could not prepare this lesson. Check your provider and try again."
+            } finally { if (generation == lessonGeneration) { explanationBusy = false; lessonOperation = null } }
+        }
     }
     fun toggleSaved(line: SavedLine) = task { saved = withContext(Dispatchers.IO) { store.toggleSaved(line) } }
     private suspend fun loadProfiles() {
@@ -452,10 +520,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
             if (profiles.none { it.id == activeProfileId }) selectProfile(profiles.firstOrNull()?.id)
         } catch (error: Exception) { profileError = error.message ?: "Could not open the encrypted provider store." }
     }
-    fun editProfiles() { cancelAi(); pauseScrolling(); profileReturnRoute = route; route = "profiles" }
+    fun editProfiles() { closeLesson(); cancelAi(); pauseScrolling(); profileReturnRoute = route; route = "profiles" }
     fun closeProfiles() { route = profileReturnRoute; if (route == "editor") prepareEditorAutomatically() }
     fun selectProfile(id: String?) {
-        cancelAi(); scrollTranslation?.reset(); activeProfileId = id
+        cancelAi(); cancelExplanation(); explanation = null; scrollTranslation?.reset(); activeProfileId = id
         prefs.edit().putString("activeProfile", id).apply()
     }
     fun saveProfile(profile: ProviderProfile, replacementKey: String?, removeKey: Boolean, onSaved: () -> Unit) = task {

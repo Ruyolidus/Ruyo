@@ -37,7 +37,7 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
         val request = batchRequest(secret, sources, target)
         return parseBatch(secret.profile.kind, withTimeout(65_000) { post(request) }, sources.map { it.id }.toSet())
     }
-    private suspend fun post(request: ProviderRequest): String = suspendCancellableCoroutine { continuation ->
+    internal suspend fun post(request: ProviderRequest): String = suspendCancellableCoroutine { continuation ->
         val connection = AtomicReference<HttpURLConnection?>()
         continuation.invokeOnCancellation { connection.getAndSet(null)?.disconnect() }
         Dispatchers.IO.dispatch(EmptyCoroutineContext, Runnable {
@@ -109,7 +109,7 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
             }).toString()
             return envelope(secret, instruction, input)
         }
-        private fun envelope(secret: ProviderSecret, instruction: String, input: String): ProviderRequest {
+        internal fun envelope(secret: ProviderSecret, instruction: String, input: String): ProviderRequest {
             require(secret.apiKey.length <= 4096 && secret.apiKey.all { it.code in 33..126 }) { "Invalid API key." }
             val profile = secret.profile.validate()
             val base = profile.baseUrl.trimEnd('/')
@@ -143,7 +143,7 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
             }
             return ProviderRequest(base + path, headers, body.toString())
         }
-        private fun objectContent(kind: ProviderKind, response: String): JSONObject {
+        internal fun objectContent(kind: ProviderKind, response: String): JSONObject {
                 val root = JSONObject(response)
                 val content = when (kind) {
                     ProviderKind.OPENAI, ProviderKind.COMPATIBLE -> {

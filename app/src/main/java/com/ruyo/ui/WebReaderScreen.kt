@@ -58,7 +58,11 @@ internal fun WebReaderScreen(model: RuyoModel) {
                         TextButton(onClick = { retry++ }) { Text("Retry image", color = Color.White) }
                     }
                 } else ReaderPage(if (model.japanese) page.displayed else page.original, "Web image " + (index + 1), "web-page-" + index) { x, y ->
-                    if (!model.busy) model.editWebBubble(index, x, y)
+                    if (!model.busy) {
+                        val translated = if (model.japanese) page.edits.findLast { it.region.contains(x, y) } else null
+                        if (translated != null) model.studyEdit(translated, page, index)
+                        else model.editWebBubble(index, x, y)
+                    }
                 }
             }
             item {
@@ -131,7 +135,7 @@ internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier 
             item {
                 Text("Only recognised dialogue text is sent to your provider. Comic images stay on this device. Nearby bubbles are translated in small groups; saved swaps are reused.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Pinch to zoom. Tap web dialogue to edit; use the pencil for local chapters.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
+                Text("Pinch to zoom. Tap translated dialogue to study. Edit from its lesson sheet; tap untranslated web dialogue to translate it.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
             }
             item {
                 if (model.route == "webread") OutlinedButton(onClick = { settings = false; model.returnToWebsite() }, modifier = Modifier.fillMaxWidth()) { Text("Return to website") }
