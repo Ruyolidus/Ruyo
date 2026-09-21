@@ -58,7 +58,7 @@ internal fun SeriesScreen(model: RuyoModel, add: () -> Unit) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f).clickable { model.openBook(book) }.padding(vertical = 12.dp).testTag("series-chapter-" + book.id)) {
                     Text("${index + 1}. ${book.title}", style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    Text("${book.pages.size} pages", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("${book.pages.size} ${if (book.pages.size == 1) "page" else "pages"}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 IconButton(onClick = { model.moveSeriesChapter(book.id, -1) }, enabled = !model.busy && index > 0, modifier = Modifier.testTag("chapter-up-" + book.id)) { Icon(AppIcons.Up, "Move chapter up", Modifier.size(18.dp)) }
                 IconButton(onClick = { model.moveSeriesChapter(book.id, 1) }, enabled = !model.busy && index < books.lastIndex) { Icon(AppIcons.Down, "Move chapter down", Modifier.size(18.dp)) }
@@ -104,9 +104,23 @@ internal fun PreparationScreen(model: RuyoModel) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (model.preparationRunning) OutlinedButton(onClick = { model.pausePreparation() }, modifier = Modifier.fillMaxWidth().testTag("pause-preparation")) { Text("Pause preparation") }
             else if (done < book.pages.size) Button(onClick = model::startPreparation, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("resume-preparation")) { Text("Resume preparation") }
-            Button(onClick = model::finishPreparation, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("read-prepared-chapter")) {
-                Text(if (model.preparationRunning || done < book.pages.size) "Pause and read now" else "Read chapter")
+            else if (review > 0) OutlinedButton(onClick = model::retrySkippedPreparation, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("retry-skipped")) { Text("Retry skipped text") }
+            Button(onClick = model::finishPreparation, enabled = !model.busy,
+                colors = if (done == book.pages.size && !model.preparationRunning) ButtonDefaults.buttonColors() else ButtonDefaults.filledTonalButtonColors(),
+                modifier = Modifier.fillMaxWidth().testTag("read-prepared-chapter")) {
+                Text(if (model.preparationRunning) "Pause and read now" else if (done < book.pages.size) "Read now" else "Read chapter")
             }
+        }
+    }
+}
+
+@Composable
+internal fun SourceScriptPicker(model: RuyoModel, enabled: Boolean) {
+    var expanded by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag("source-script-picker")) { Text("Original text: " + model.ocrScript.label) }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            com.ruyo.ai.OcrScript.entries.forEach { script -> DropdownMenuItem(text = { Text(script.label) }, onClick = { model.changeOcrScript(script); expanded = false }) }
         }
     }
 }

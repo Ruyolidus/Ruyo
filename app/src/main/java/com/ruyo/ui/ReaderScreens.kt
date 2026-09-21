@@ -213,7 +213,19 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                         when (selectedTab) {
                             0 -> {
                                 item { Text(value.meaning, modifier = Modifier.testTag("lesson-meaning")); Spacer(Modifier.height(16.dp)); SectionLabel("Examples") }
-                                value.examples.forEach { point -> item { Text(point.text, style = MaterialTheme.typography.titleMedium); Text(point.explanation) } }
+                                value.examples.forEachIndexed { index, example ->
+                                    item {
+                                        Text(example.text, style = MaterialTheme.typography.titleMedium)
+                                        Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
+                                        Text(example.explanation, Modifier.padding(top = 8.dp))
+                                        Text("Word by word", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge)
+                                    }
+                                    example.words.forEach { word -> item {
+                                        Text(word.word + " · " + word.reading, style = MaterialTheme.typography.titleSmall)
+                                        Text(word.meaning)
+                                    } }
+                                }
                             }
                             1 -> value.grammar.forEach { point -> item { Text(point.text, style = MaterialTheme.typography.titleMedium); Text(point.explanation) } }
                             2 -> {
@@ -229,8 +241,9 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                 var revealed by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
                                 Text("Exercise " + (index + 1), style = MaterialTheme.typography.labelSmall)
                                 Text(exercise.question, style = MaterialTheme.typography.bodyLarge)
+                                if (exercise.hint.isNotBlank()) Text(exercise.hint, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 TextButton(onClick = { revealed = !revealed }) { Text(if (revealed) "Hide answer" else "Show answer") }
-                                if (revealed) { Text(exercise.answer, style = MaterialTheme.typography.titleMedium); Text(exercise.explanation) }
+                                if (revealed) { Text(exercise.answer, style = MaterialTheme.typography.titleMedium); Text(exercise.answerReading); Text(exercise.explanation) }
                             } }
                         }
                     }

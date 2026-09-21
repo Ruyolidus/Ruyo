@@ -37,7 +37,7 @@ class AppFlowTest {
 
     @Before fun resetState() {
         context.filesDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
-        File(context.cacheDir, "lessons-v1").deleteRecursively()
+        File(context.cacheDir, "lessons-v2").deleteRecursively()
         context.getSharedPreferences("settings", 0).edit().clear().commit()
     }
 
@@ -180,6 +180,8 @@ class AppFlowTest {
         awaitTag("book-sample")
         compose.onNodeWithContentDescription("Browse websites").performClick()
         awaitTag("web-browser")
+        compose.onNodeWithTag("read-web-chapter").assertDoesNotExist()
+        compose.onNodeWithTag("find-web-images").assertExists()
         compose.onNodeWithTag("web-address").assertDoesNotExist()
         capture("web-browser-collapsed")
         compose.onNodeWithTag("toggle-web-address").performClick()
@@ -350,8 +352,8 @@ class AppFlowTest {
             }, explanationService = ExplanationService { _, text, language ->
                 assertEquals("待って！", text); assertEquals("ja", language); lessons++
                 AiLesson("Wait! A casual request.", "matte", listOf(LessonPoint("待って", "The te-form makes a casual request.")),
-                    listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonPoint("少し待って。", "Wait a little.")),
-                    listOf(LessonExercise("What is the dictionary form of 待って?", "待つ", "待って is the te-form of 待つ.")))
+                    listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonExample("少し待って。", "すこしまって。", "Sukoshi matte.", "Wait a little. The te-form asks someone to wait.", listOf(LessonWord("少し", "すこし", "a little", "N5"), LessonWord("待って", "まって", "wait, as a casual request", "N5")))),
+                    listOf(LessonExercise("What is the dictionary form of 待って?", "待つ", "待って is the te-form of 待つ.", "待って (まって / matte) means wait, as a request.", "まつ / matsu")))
             })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
@@ -409,6 +411,13 @@ class AppFlowTest {
         awaitTag("study-sheet")
         awaitState { model.explanation != null && !model.explanationBusy }
         assertEquals(1, lessons)
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("example-reading-0"))
+        compose.onNodeWithText("すこしまって。").assertExists()
+        compose.onNodeWithText("Sukoshi matte.").assertExists()
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("Word by word"))
+        capture("ai-lesson-readable-example", "study-sheet")
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("a little"))
+        compose.onNodeWithText("少し · すこし").assertExists()
         compose.onNodeWithText("Grammar").performClick()
         compose.onNodeWithText("The te-form makes a casual request.").assertExists()
         capture("ai-lesson", "study-sheet")
@@ -443,8 +452,8 @@ class AppFlowTest {
             calls++
             if (calls == 1) withContext(NonCancellable) { entered.set(true); release.await(); returned.set(true) }
             AiLesson("A greeting.", "hello", listOf(LessonPoint("Hello", "A greeting.")),
-                listOf(LessonWord("hello", "", "a greeting", "")), listOf(LessonPoint("Hello, Sam.", "Greeting Sam.")),
-                listOf(LessonExercise("Name one greeting.", "Hello.", "Hello is a greeting.")))
+                listOf(LessonWord("hello", "", "a greeting", "")), listOf(LessonExample("Hello, Sam.", "Hello, Sam.", "Hello, Sam.", "Greeting Sam.", listOf(LessonWord("Hello", "hello", "a greeting", ""), LessonWord("Sam", "Sam", "a person’s name", "")))),
+                listOf(LessonExercise("Name one greeting.", "Hello.", "Hello is a greeting.", "A greeting is something you say when meeting someone.", "hello")))
         })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
@@ -491,6 +500,8 @@ class AppFlowTest {
         awaitTag("import-review"); awaitState { !model.busy }
         assertEquals(seriesId, model.importing!!.seriesId)
         assertTrue(model.importing!!.translateBeforeReading)
+        compose.onNodeWithTag("source-script-picker").performScrollTo().assertIsDisplayed()
+        capture("chapter-import-translation")
         compose.onNodeWithTag("save-chapter").performClick()
         awaitTag("chapter-preparation")
         awaitState { !model.preparationRunning && model.preparationError != null }
@@ -500,7 +511,7 @@ class AppFlowTest {
         awaitState { !model.preparationRunning && model.preparationReports.size == 2 }
         assertNull(model.preparationError); assertEquals(3, calls)
         val book = model.chapter!!
-        assertEquals(2, LocalBookStore(context).preparation(book, "ja:LATIN").size)
+        assertEquals(2, LocalBookStore(context).preparation(book, "cleanup-v2:ja:LATIN").size)
         assertTrue(book.pages.all { store.openPage(book, it).edits.size == 1 })
         compose.onNodeWithTag("read-prepared-chapter").performClick()
         awaitTag("book-reader"); awaitState { !model.busy }
@@ -546,4 +557,3 @@ class AppFlowTest {
         bitmap.recycle()
     }
 }
-

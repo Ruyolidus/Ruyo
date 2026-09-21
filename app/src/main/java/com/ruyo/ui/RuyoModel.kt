@@ -51,14 +51,15 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var preparationReports by mutableStateOf<Map<String, PagePreparation>>(emptyMap()); private set
     private var preparationJob: Job? = null
     private var prepareAfterTask = false
-    private val preparationKey get() = targetLanguage + ":" + ocrScript.name
+    private val preparationKey get() = "cleanup-v2:" + targetLanguage + ":" + ocrScript.name
     fun seriesFor(bookId: String) = series.firstOrNull { bookId in it.chapters }
     fun orderedChapters(seriesId: String): List<LocalBook> = series.firstOrNull { it.id == seriesId }?.chapters.orEmpty().mapNotNull { id -> books.firstOrNull { it.id == id } }
     fun neighbor(delta: Int): LocalBook? {
         val current = chapter ?: return null
         val group = seriesFor(current.id) ?: return null
         val ordered = orderedChapters(group.id)
-        return ordered.getOrNull(ordered.indexOfFirst { it.id == current.id } + delta)
+        val index = ordered.indexOfFirst { it.id == current.id }
+        return if (index < 0) null else ordered.getOrNull(index + delta)
     }
     fun openSeries(id: String) { activeSeriesId = id; route = "series" }
     fun createSeries(title: String, forImport: Boolean = false) = task {
@@ -100,6 +101,12 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         readingPosition = ReadingPosition(pageId, 0); pageRevision++; selecting = true; route = "book"
     }
     fun startPreparation() {
+        prepareChapter(retrySkipped = false)
+    }
+    fun retrySkippedPreparation() {
+        prepareChapter(retrySkipped = true)
+    }
+    private fun prepareChapter(retrySkipped: Boolean) {
         val book = chapter ?: return
         if (busy || preparationJob?.isCompleted == false) return
         if (activeProfile == null) { editProfiles(); return }
@@ -113,7 +120,8 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                 preparationReports = withContext(Dispatchers.IO) { store.preparation(book, key) }
                 for ((index, metadata) in book.pages.withIndex()) {
                     ensureActive()
-                    if (metadata.id in preparationReports) continue
+                    val previous = preparationReports[metadata.id]
+                    if (previous != null && (!retrySkipped || !previous.needsReview)) continue
                     preparationStatus = "Page ${index + 1} of ${book.pages.size} · Recognizing dialogue…"
                     val page = pageLoader.load(book, metadata)
                     val coroutine = currentCoroutineContext()
@@ -381,7 +389,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         series = withContext(Dispatchers.IO) { seriesStore.list() }
         setChapter(book)
         prepareAfterTask = current.translateBeforeReading && activeProfile != null
-        message = if (groupResult.isFailure) "Chapter saved, but it could not be placed in that series." else "Chapter saved"
+        message = if (groupResult.isFailure) "Chapter saved, but it could not be placed in that series." else if (prepareAfterTask) null else "Chapter saved"
 
     }
     fun openBook(book: LocalBook) = task { flushPosition(); setChapter(withContext(Dispatchers.IO) { store.readBook(book.id) }) }
@@ -446,7 +454,22 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val existing = book.edits.findLast { it.region.contains(x, y) }
         val region = if (existing != null) existing.region else when (val result = withContext(Dispatchers.Default) { BubbleSelector.select(book.original, x, y) }) {
             is SelectionResult.Selected -> result.region
-            is SelectionResult.Rejected -> { selectionError = result.reason; return }
+            is SelectionResult.Rejected -> {
+                val lines = try { withContext(Dispatchers.Default) { ocrService.lines(book.original, ocrScript) } }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { emptyList() }
+                val fallback = withContext(Dispatchers.Default) {
+                    TextRegionRepair.groups(lines).firstOrNull { group -> group.any { line ->
+                        val halo = maxOf(4, (line.bottom - line.top) / 3)
+                        x in (line.left - halo)..(line.right + halo) && y in (line.top - halo)..(line.bottom + halo)
+                    } }?.let { TextRegionRepair.select(book.original, it, lines) }
+                }
+                if (fallback == null || book.edits.any { it.region.overlaps(fallback) }) {
+                    selectionError = "Could not isolate the lettering on a smooth background. Check Original text in reader settings, then tap the lettering. Detailed artwork still needs manual cleanup."
+                    return
+                }
+                fallback
+            }
         }
         opened = book
         areaSelection = null

@@ -14,6 +14,8 @@ data class BubbleRegion(
     val interior: PixelMask,
     val eraseMask: BooleanArray,
     val backgroundColor: Int,
+    val backgroundSurface: BackgroundSurface? = null,
+    val textColor: Int = Color.rgb(39, 42, 53),
 ) {
     val width get() = interior.width
     val height get() = interior.height
@@ -101,7 +103,7 @@ object BubbleSelector {
         fun reject(message: String) = SelectionResult.Rejected(message)
         val seed = pixels[y * w + x]
         if (!isLight(seed)) {
-            return reject("Tap a plain, light bubble. Colored panels and text over artwork need a different cleanup method, which is not available yet.")
+            return reject("No enclosed light bubble found. Tap the lettering to try text-area cleanup. Detailed artwork may need manual repair.")
         }
         // Erosion closes only very narrow background leaks through a broken outline.
         // The accepted interior stays inset; source border pixels are never repainted.
@@ -211,11 +213,12 @@ object BubbleEditRenderer {
         val preferred = preferredSize(source.width, edit)
         val minimum = min(preferred, 6f)
         val result = BubbleFitter().fit(edit.japanese, safe, preferred, minimum,
-            languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic))
+            textColor = region.textColor, languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic))
         require(result is FitResult.Accepted) { (result as FitResult.Rejected).reason }
         val pixels = IntArray(region.width * region.height)
         source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
-        for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] = region.backgroundColor
+        for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] =
+            region.backgroundSurface?.colorAt(region.left + i % region.width, region.top + i / region.width) ?: region.backgroundColor
         val crop = Bitmap.createBitmap(region.width, region.height, Bitmap.Config.ARGB_8888)
         crop.setPixels(pixels, 0, region.width, 0, 0, region.width, region.height)
         Canvas(crop).drawBitmap(result.ink, 0f, 0f, null)

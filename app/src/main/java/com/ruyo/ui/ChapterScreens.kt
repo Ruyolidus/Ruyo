@@ -50,6 +50,7 @@ internal fun ImportReviewScreen(model: RuyoModel, onAdd: () -> Unit) {
                 }
                 if (draft.translateBeforeReading) {
                     LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy)
+                    SourceScriptPicker(model, !model.busy)
                     TextButton(onClick = model::editProfiles, enabled = !model.busy) { Text(model.activeProfile?.name ?: "Choose AI provider") }
                     Text("Only recognized dialogue text is sent. Unsupported lettering remains original and is flagged for review.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

@@ -76,6 +76,7 @@ private fun AppContent(model: RuyoModel) {
             "import" -> discardImport = true
             "pages" -> model.reader()
             "book" -> model.leaveReader()
+            "web" -> model.activeSeriesId?.let(model::openSeries) ?: model.home()
             "prepare" -> model.finishPreparation()
             "webread" -> model.returnToWebsite()
             else -> model.home()

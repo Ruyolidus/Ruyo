@@ -22,10 +22,10 @@ object AutoBubbleDetector {
             val selected = BubbleSelector.select(source, line.x, line.y) as? SelectionResult.Selected ?: continue
             if (parents.none { it.overlaps(selected.region) }) parents += selected.region
         }
-        return parents.map { parent ->
+        val detected = parents.map { parent ->
             currentCoroutineContext().ensureActive()
             val centers = savedCenters(parent) ?: BubbleAreas.suggest(parent)
-            val parts = BubbleAreas.split(parent, centers)
+            val parts = runCatching { BubbleAreas.split(parent, centers) }.getOrElse { emptyList() }
             val bubbles = parts.mapNotNull { region ->
                 val assigned = valid.filter { region.contains(it.x, it.y) }.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
                 // Never erase a line that was divided between two parts or outside the cleanup area.
@@ -48,6 +48,19 @@ object AutoBubbleDetector {
                 if (!covered || !whole || text.isBlank() || text.length > 2000 || region.eraseMask.none { it }) null else DetectedBubble(region, text)
             }
             DetectedGroup(parent, centers, bubbles)
+        }.toMutableList()
+        val accepted = detected.flatMap { it.bubbles }.map { it.region }.toMutableList()
+        val missing = valid.filter { line -> accepted.none { it.contains(line.x, line.y) } }
+        for (block in TextRegionRepair.groups(missing)) {
+            currentCoroutineContext().ensureActive()
+            if (accepted.size >= 40) break
+            val region = TextRegionRepair.select(source, block, valid) ?: continue
+            if (accepted.any { it.overlaps(region) }) continue
+            val text = block.joinToString("\n") { it.text }
+            if (text.length > 2000) continue
+            accepted += region
+            detected += DetectedGroup(region, listOf(Point(region.width / 2, region.height / 2)), listOf(DetectedBubble(region, text)))
         }
+        return detected.filter { it.bubbles.isNotEmpty() }
     }
 }

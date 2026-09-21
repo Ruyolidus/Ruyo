@@ -20,7 +20,8 @@ class DocumentImportDeviceTest {
         val root = File(context.cacheDir, UUID.randomUUID().toString()).apply { mkdirs() }
         try {
             val file = File(root, "chapter.pdf")
-            PdfDocument().use { pdf ->
+            val pdf = PdfDocument()
+            try {
                 for ((index, color) in listOf(Color.RED, Color.BLUE).withIndex()) {
                     val page = pdf.startPage(PdfDocument.PageInfo.Builder(300, 400, index + 1).create())
                     page.canvas.drawColor(Color.WHITE)
@@ -28,7 +29,7 @@ class DocumentImportDeviceTest {
                     pdf.finishPage(page)
                 }
                 file.outputStream().use(pdf::writeTo)
-            }
+            } finally { pdf.close() }
             val store = LocalBookStore(context, File(root, "library"), File(root, "stage"))
             val pages = DocumentImporter(context, store).pdf(file, "chapter.pdf", 200, 512L * 1024 * 1024, {})
             assertEquals(2, pages.size)

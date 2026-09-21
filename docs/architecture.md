@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.4.1)
+## Current scope (0.5.1)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -44,7 +44,7 @@ never publishes a partial list. Page removal updates metadata before deleting fi
 The multi-document picker copies files during the current activity session; no
 broad storage permission is needed. The review screen supports title, numeric
 filename sorting, individual moves/removal, and append. Original bytes are archived
-separately from the bounded working PNG (6 MP / 8192 pixels per dimension for new imports). Existing working copies and edit coordinates are not silently resized. Each file has a 40 MB limit and each batch
+separately from the bounded working PNG (6 MP / 8192 pixels per dimension for new imports). Existing working copies and edit coordinates are not silently resized. Encoded image files have a 40 MB limit; PDF/CBZ documents have a 128 MB limit, and each batch
 a 512 MB storage budget. A chapter has up to 200 pages. Imports report individual
 failures before saving and support cancellation. Unsaved imports are temporary;
 process death does not commit them. Old orphaned cache folders may be removed by Android.
@@ -100,7 +100,7 @@ OCR against a downscaled working copy must not imply that tiny dialogue is
 preserved. The editor currently supports light, flat bubbles and manually entered or AI-translated
 translations; source pixels stay intact for reprocessing or restoring a bubble.
 
-See [the browser translation plan](browser-translation.md) for the on-page reading session, original-resolution pipeline, and colored-panel repair work.
+See [the browser translation plan](browser-translation.md) for chapter preparation, document importing, and remaining colored-panel repair work.
 
 ## Selected-area translation in 0.4.0
 
@@ -139,28 +139,40 @@ switching profiles, or changing input cancels pending work. Late results cannot
 replace newer edits. OCR native task ownership lasts until completion, including
 its bitmap and single-job mutex, even when the UI request is cancelled.
 
-## Live reading and request grouping in 0.4.1
+## Import preparation and series in 0.5.0
 
-Read retains the website WebView underneath an opaque native reader. A cancellable
-foreground loop advances the page in bounded viewport increments near the current
-image and periodically discovers images. This lets the site's scroll handlers and
-IntersectionObserver load more content. Newly discovered URLs are merged around
-known anchors; previously seen virtualized images are retained. Session books are
-keyed by image URL, so inserting an earlier image cannot attach an edit to another
-page. Insertions preserve the current image anchor and reset index-based scheduling;
-ordinary appends resize the scheduler without restarting an in-flight request.
+The browser now collects ordinary chapter image URLs while the user browses and
+scrolls. Previously seen URLs survive DOM virtualization. Extract images opens
+selection and import review; the live native reading prototype is not exposed in
+the browser UI. The WebView is released when leaving the browser.
 
-Short wide strips in known chapter containers are retained. Empty initial discovery
-can enter Read and wait for the site. The UI offers Website for loaders requiring
-manual interaction. Source limits remain 200 images, 40 MB per image, and a 512 MB
-session source budget. Cross-page automatic navigation is not followed from Read.
+DocumentImporter turns PDF pages and CBZ/ZIP images into staged LocalPage records.
+PDF rendering stays on a worker thread, one page at a time, within the same 6 MP /
+8192-pixel working limit. A source PDF is retained once per imported document.
+Archive entry paths, image counts, encoded bytes, expanded bytes, and staged disk
+usage are bounded. A failed document rolls back its staged pages; already staged
+files from other inputs remain available for review.
 
-The reader has a small floating translation/controls pill. Detailed controls are
-in a bottom sheet; minimal mode hides the top toolbar. Images remain full-width
-with their complete aspect ratio. Recognition sends no images to a provider.
+SeriesStore keeps named series and exclusive ordered chapter membership in one
+atomic JSON document. Existing book/page IDs, edits, and progress are unchanged.
+Removing a series leaves its books intact. Reader neighbors use the current
+series order; unrelated chapters cannot become Next/Previous targets.
+
+Translate before reading saves the chapter first, then starts a foreground
+preparation coroutine over all pages. Per-page reports commit only after the
+page's valid swaps have been saved. Errors and backgrounding stop the job;
+resumption reuses reports and saved swaps. Reports are keyed by target language
+and source writing system. Manual edit changes invalidate the affected report.
+Unsupported recognized lettering is flagged for review and preserves its source.
+
+The Original/Translated switch is always visible in the chapter reader. Hiding
+the title bar keeps the switch and series navigation available. A small settings
+button contains preparation, source/target choices, and editor access. The active
+reader does not translate in response to scrolling.
+
 Native requests group up to four dialogues / 6000 characters, validate unique IDs
-and full translations, then save/compose each valid batch. Recent OCR and completed
-responses are reused. Models and network conditions still determine API latency.
+and full translations, then save/compose each valid batch. Recognition sends no
+images to a provider. Models and network conditions still determine API latency.
 
 ## Next stages
 
@@ -173,7 +185,7 @@ responses are reused. Models and network conditions still determine API latency.
 4. Add selectable explanation languages and an independently chosen lesson profile.
 5. Add manual narration regions and gradient/textured-background repair with
    explicit quality checks, plus licensed custom font import.
-6. Extend local import with CBZs and permitted source adapters. On-phone inference
+6. Extend permitted source adapters and background preparation. On-phone inference
    remains separate from connecting to a local model server.
 
 ## Testing strategy
@@ -229,3 +241,27 @@ lesson archive. Provider calls remain bounded, cancellable, and text-only.
 Closing the sheet or changing profile invalidates its generation so late results
 cannot populate another lesson or enter the cache. The editor action reloads the
 current saved edit by ID; website edits resolve image URLs, not stale indices.
+
+## Smooth text regions and readable lessons (0.5.1)
+
+`TextRegionRepair` is a fallback after the enclosed bubble path. It groups nearby
+OCR lines, estimates an RGB plane from surrounding non-text samples, validates
+background agreement and letter-sized components, then expands only the glyph
+mask by two pixels. No rectangle is painted. The region stores four background
+corner colors and page coordinates; existing masks keep their original flat fill.
+The same surface and foreground color survive splitting, save, reopen and undo.
+Dark bars use light foreground lettering when the source lettering is light.
+This is interpolation of smooth backgrounds, not general artwork inpainting.
+
+The editor tries this fallback using on-device OCR after an enclosed selection
+fails. Chapter detection also uses it for unhandled lines. Preparation metadata
+uses `cleanup-v2` so older reports do not hide newly supported text. Explicit
+Retry skipped text preserves every saved edit and retries only review pages.
+
+Lesson examples now require a full reading, romanization, English explanation and
+ordered chunks covering all letters/digits in the example. Every chunk has a
+reading and meaning; readings containing Han characters are rejected. Exercise
+hints and answer readings are separate from the hidden answer. Prompts request
+simple vocabulary and plain-English grammar terms. These structural checks do
+not guarantee factual accuracy of model explanations. The lessons-v2 cache
+invalidates previous incomplete examples without touching saved sentences.

@@ -3,7 +3,7 @@
 An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.4.1
+## Preview 0.5.1
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
@@ -25,13 +25,21 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   it with the active profile, and shows the fitted preview. Source correction and
   provider controls are optional. Saved translations open for revision without another
   provider request. Cancellation and edit revision checks reject late results.
-- Translation while scrolling in both imported chapters and website reading mode:
-  one native worker processes visible images and one ahead, saves validated swaps,
-  and skips completed dialogue on revisits. Start/Pause is explicit for each session.
-- Website **Read** keeps the attached website alive behind a temporary native
-  reader. It advances the website near your reading position and incorporates newly
-  loaded chapter images, including short strips in recognised chapter containers. Tap translated dialogue to study, or untranslated dialogue to use the automatic editor, then return
-  to the same reading position. No library import is required.
+- Named series contain ordered, isolated chapters. Create or rename a series, move
+  chapters between series, reorder them, and use Previous/Next chapter controls.
+  Removing a series leaves its chapters in the library.
+- Imports accept image chunks, PDFs, CBZs, and image ZIPs. PDF pages render in order;
+  archive images use natural filename order. Every format reaches the same review
+  screen for chapter title, series, page ordering, source script, and target language.
+- **Translate before reading** prepares all pages after saving the import. It uses
+  local OCR and small text-only AI batches, persists completed pages, and resumes
+  unfinished work after interruption. The app must remain open while preparing.
+  Failed or unsupported lettering is preserved and flagged for review.
+- A visible **Original / Translated** switch stays in the reader, including minimal
+  mode. Switching views uses saved pixels and edits without another API request.
+- The browser is an extraction tool again. It collects chapter images while you
+  browse and scroll; **Extract images** opens selection and import. There is no
+  live translation or hidden website scrolling in the active browser flow.
 - A compact browser address icon at the top right. Tap to expand and focus the field; successful navigation collapses it again.
 - A persistent default target language and per-edit language choices, including custom language codes. Existing Japanese edits retain their language.
 - Sans serif, serif, condensed, and monospace lettering with bold/italic controls and device script fallback. Exact source-font recognition and custom font-file import are not implemented.
@@ -44,20 +52,21 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 - A continuous reader with saved page/scroll position, serialized loading, and a
   bounded cache of nearby pages. Library search, filters, and thumbnails remain.
 - An in-app HTTPS browser: paste a chapter link, browse and scroll to load lazy
-  images, tap **Import**, select pages, download, review their order, then save.
-  **Read** starts a temporary reading session instead.
+  images, tap **Extract images**, select pages, download, review their order, then save.
+  Imported website chapters support the same preparation and study tools as local files.
 - The browser address field has a persistent filled background and visible outline in both themes. Image discovery separates recognized comment/profile images and images outside known reader containers; these are not selected by default. A manual toggle keeps them available if a site is misclassified. Responsive image sets prefer their largest declared source.
 - Import progress, cancellation, and per-image failures. Partial successful imports
   are shown for review; they are never silently saved as complete chapters.
-- A full-width comic reader with pinch zoom and original/Japanese switching.
+- A full-width comic reader with pinch zoom and visible Original/Translated switching.
 - A restrained light/dark interface with Library, Saved, and Settings navigation.
-- Reading settings live in a bottom sheet. A small floating Translate/controls pill
-  replaces stacked toolbars; **Minimal reader** hides the top bar too.
+- Reading settings live in a bottom sheet. The previous floating Translate/controls pill
+  is replaced by a small settings button; hiding the title bar keeps the language switch visible.
 - Tap an enclosed, light, flat bubble to select it; review and brush-correct its
   lettering mask, enter a translation, adjust its style and padding, preview, and save the replacement.
 - Small bubbles can be selected, including a tap that lands on lettering when a nearby blank seed belongs to the same interior. Rejections remain visible while selecting.
-- The selector rejects page backgrounds, unsuitable seeds, uneven backgrounds,
-  oversized selections, and regions likely to contain artwork.
+- OCR-guided cleanup also handles text on flat colored panels, dark bars, and gentle
+  gradients. It samples the background around the lettering and changes only the
+  glyph mask. Detailed artwork, ambiguous regions, and unreadable text stay original.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
   edited bubble to revise it or restore its original state.
 - Lettering starts at normal dialogue size or an estimated source size and automatically reflows/shrinks as needed.
@@ -65,8 +74,11 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   the preview. Short dialogue is no longer enlarged to fill an empty bubble.
 - Every successful replacement preview scrolls into view. Fit failures stay visible
   in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
-- Tap a translated bubble in either reader for an automatic AI lesson: meaning,
+- Tap a translated bubble in the chapter reader for an automatic AI lesson: meaning,
   grammar, vocabulary, original examples, and exercises with revealable answers.
+  Each example includes its reading, romanization, meaning, and an ordered explanation
+  of every word/particle. Japanese readings contain no kanji. Exercise hints include
+  reading help; incomplete example breakdowns are rejected. Old lessons refresh once.
   Japanese vocabulary can include approximate JLPT estimates. Explanations are in
   English, use the active provider, and send only the tapped dialogue text.
   Up to 100 validated lessons are cached privately on this device; changing text,
@@ -75,30 +87,26 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   the same reading position. Sample lessons remain built-in; saved sentences can
   also open generated lessons.
 
-**Automatic translation is a first preview for enclosed, light, flat dialogue bubbles.**
+**Automatic translation supports enclosed light bubbles and OCR-located text on smooth backgrounds.**
 The source-script OCR model must match the comic. Detection uses OCR line positions
 and the conservative bubble selector, including independent parts of joined balloons.
+When that path fails, a bounded text area can use flat/linear background reconstruction.
+It requires a clear surrounding background and letter-sized ink components. It cannot
+inpaint arbitrary artwork or recover lettering missed by OCR.
 A line crossing a region boundary or an incomplete OCR footprint is left for manual
 editing. Fitting failures keep the original pixels; text is never silently shortened.
 
-Website reading mode uses the current page's HTTPS image URLs in document order.
-It is an in-app native reading view, not replacement inside the website's HTML.
-The live website is advanced as you approach undiscovered images. Sites requiring a
-manual interaction still need the **Website** action. Comments and
-profile images recognized by the collector are excluded. Canvas readers, iframes,
-scrambled images, protected downloads, and some lazy loaders need source adapters.
-This does not promise support for every scan site. Access restrictions are not bypassed.
-
-Browser sessions have a 512 MB temporary cache. Edits survive returning to the
-website and reopening Read for the same discovered chapter while the app is alive.
-Starting another web chapter, clearing browsing data, cache removal, or process
-death may lose this temporary session. Import pages for durable offline chapters.
+The browser collects HTTPS image URLs as you browse, filters common comment/profile
+images, and retains previously seen chapter images. Extract them into an imported
+chapter to prepare translations and read offline. Canvas readers, iframes,
+scrambled images, protected downloads, and unusual lazy loaders need source
+adapters. This does not promise support for every scan site.
 
 Recognition uses the bounded working image (up to 6 MP), so tiny original lettering
 can still need correction. Latin, Japanese, Chinese, Korean, and Devanagari OCR are
 bundled; other source scripts can be typed manually. Target language is configurable,
-with Japanese as default. Gradient/narration repair, text over artwork,
-original-resolution tiling, custom font import, and CBZs remain
+with Japanese as default. Complex textured/curved-gradient repair, text over artwork,
+original-resolution tiling and custom font import remain
 future work. No opaque rectangular covers are used as a fallback.
 
 New imports retain original image bytes in private storage plus bounded working
@@ -113,32 +121,27 @@ chapter to 200 images. Unsaved import/editor drafts do not survive process death
 1. In **Settings → Manage AI providers**, add a named profile, choose its API format,
    and enter the exact model ID, base URL, and your key. Select the active profile.
    Use **OpenAI compatible** for DeepSeek or a compatible local server.
-2. Open an imported chapter and tap its pencil, or open a website and choose **Read**.
-   Tap a light enclosed bubble. Recognition, translation, and the fitted preview
-   start automatically when a provider is selected.
-3. Inspect the preview and optionally change text, font, bold/italic, size, or padding.
-   **Source and provider** reveals recognition correction, source script, and retry.
-   Choose **Save** to return to the same reader.
-4. For joined bubbles, each detected lobe has its own translation. **Adjust joined
-   bubble areas** allows center correction; restore that group's saved translations
-   before changing an existing partition.
-5. In either reader, tap **Translate** once to translate as you scroll. The settings
-   icon selects source script, target language, and provider. The original remains
-   readable while a result is pending. **Pause**, opening an editor, leaving the reader,
-   or backgrounding the app stops the worker. Tap Translate to resume after editing.
+2. Create a series, then add image chunks, a PDF, a CBZ/ZIP, or extracted website
+   images. Set the chapter title and order its pages in import review.
+3. Enable Translate before reading, select the original writing system and target
+   language, then Save and translate. Keep the app open during preparation.
+   Pause and resume are supported, including after a provider error.
+4. Read with the visible Original/Translated switch. Previous/Next follow your
+   series order. Tap translated dialogue for a lesson, then Edit to adjust its
+   wording, font, bold/italic, size, padding, or cleanup mask.
+5. The pencil selects untranslated bubbles for manual or automatic editing. Joined
+   bubble parts retain separate text regions. Restore saved text before changing
+   the area's partition. Reading controls can prepare remaining dialogue later.
 
-Opening a website or chapter alone never sends a paid request. Opening a new bubble
-with an active profile does, as does starting Translate in the reader. Only recognized
-text is sent to the native provider client; comic images and keys never enter each
-other's storage or the WebView. Failed requests stop automatic processing until an
-explicit retry. Scrolling sends up to four nearby dialogue areas in one request (at most 6000 source
-characters); the editor still uses one selected area. Every returned ID must match,
-and every full text must validate. Recent page OCR and completed responses are reused
-within the pipeline. There are no automatic paid retries. Each request allows up to 4096 output
-tokens, a 128 KiB response, and a 65-second timeout. Provider/model support and pricing
-vary; no live credentials are included in CI. HTTP is restricted to localhost and
-127.0.0.1 for servers on the phone; other endpoints require HTTPS. A local server is
-a separate app/service, not an inference engine bundled into Ruyo.
+Opening a website or chapter alone never sends a paid request. Preparing a chapter,
+opening an untranslated bubble in the editor with an active provider, or opening an
+uncached AI lesson does. Only dialogue text goes to the provider. Comic images and
+credentials never enter each other's storage or the WebView. Batches contain up to
+four dialogue areas and 6000 source characters, with validated IDs and full text.
+There are no automatic paid retries. Each request permits at most 4096 output
+tokens, a 128 KiB response, and a 65-second timeout. HTTP is restricted to localhost
+and 127.0.0.1 for on-phone servers; other endpoints require HTTPS. Local inference
+requires a separate compatible server; it is not bundled into Ruyo.
 
 ## Translation latency and data sent
 
@@ -222,7 +225,7 @@ app's interaction and performance on an actual phone.
 | `sample` | Original sample artwork and explicit prewritten learning data |
 | `importer` | Multiple-document decoding and natural filename sorting |
 | `web` | HTTPS URL policy, DOM image discovery, bounded downloads and temporary sessions |
-| `ai` | Bundled OCR, encrypted profiles, provider transports, and scroll scheduling |
+| `ai` | Bundled OCR, encrypted profiles, provider transports, chapter preparation, and lessons |
 | `data` | Ordered chapters, original files, masks, edits, progress, and saved sentences |
 | `ui` | Library, reader, chapter review, browser, editor, lessons, and themes |
 
@@ -234,3 +237,32 @@ The sample streetscape artwork, icons, and lessons were created for this reposit
 scripts and the wrapper JAR come from Gradle 8.13.0 and retain their upstream
 notices; Gradle is distributed under the Apache License 2.0. AndroidX, Kotlin,
 JUnit, and Robolectric remain subject to their respective licenses.
+
+
+### Document import limits
+
+PDF and CBZ/ZIP input files are limited to 128 MB, with at most 200 pages per
+chapter and a 512 MB prepared-import budget. Archive entries are bounded and
+validated; unsafe paths, duplicate image names, corrupt images, and over-limit
+archives fail without silently importing an incomplete document. ZIP image
+entries keep their original encoded bytes. PDFs retain one original document
+copy and render pages at up to 144 dpi within the 6 MP / 8192-pixel working limit.
+Encrypted PDFs and archives require an unencrypted copy.
+
+### Preparing and reviewing a chapter
+
+With an active provider, import review defaults to Translate before reading.
+Choose the original writing system and target language, then Save and translate.
+Completed pages and swaps persist on disk; errors and pauses leave the chapter
+readable and allow resumption. Preparation describes processed pages, not a
+promise that every visible word has been recognized. Review flags identify
+recognized lettering outside supported areas. Existing saved edits are kept,
+including edits in another target language. Text over artwork, complex gradients,
+and widely open/clipped bubble outlines still require a different repair method.
+Narrow outline leaks now use a conservative inset selection fallback; page-edge
+backgrounds are still rejected. Source and border pixels remain unchanged.
+
+In 0.5.1, chapter preparation rechecks skipped regions with the new cleanup method.
+Existing edits remain intact. **Retry skipped text** retries review pages without
+retranslating their saved regions. For a manual attempt, tap the lettering in Edit
+mode and check the **Original text** script setting if recognition fails.

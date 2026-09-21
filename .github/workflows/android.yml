@@ -91,19 +91,15 @@ jobs:
           The application ID is **com.ruyo**, including this debug build.
           It installs separately from the first com.ruyolidus.ruyo.debug preview.
 
-          This build adds multi-image chapters, page ordering and append, saved
-          reading position, an in-app HTTPS browser, and website image imports.
-          Use Add comic to select multiple files, or Browse to open a chapter link.
-          Import downloads selected pages for thumbnail/order review. Read opens a temporary in-app reading session.
-          Tap the top-right address icon to expand or collapse the browser field.
-          Bubble editing supports target languages, font styles, and estimated source size.
-          New imports retain up to 6 MP; recognized comment images are excluded by default.
-          Repeated-preview, complete-text, and multilingual shaping checks are included.
-          Joined bubble parts now have independent text areas, with manual center adjustment.
-          Opening a new bubble automatically recognizes, translates, and previews it with the active profile.
-          Add profiles in Settings > Manage AI providers. Keys are encrypted on-device.
-          Use Translate in local or website reading mode to process nearby images as you scroll.
-          Tap web dialogue to edit it. Generated lessons remain in development.
+          This build adds named series and ordered chapters, PDF/CBZ/image imports,
+          and full chapter preparation with resumable progress before reading.
+          Browse a chapter, scroll to load its images, then Extract images for import.
+          Original/Translated and series Previous/Next stay visible while reading.
+          Smooth colored panels and captions use OCR-guided lettering cleanup;
+          detailed artwork remains unchanged when cleanup cannot be validated.
+          Tap translated dialogue for AI study with example readings and word help.
+          Add profiles in Settings > Manage AI providers. Keys stay encrypted on-device.
+          Only dialogue text is sent to translation and explanation providers.
 
           Ruyo-checks includes native renderer tests and actual app-screen PNGs.
 

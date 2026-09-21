@@ -114,11 +114,11 @@ class BubbleEditorTest {
         assertTrue("A nearby bubble must not capture a tap outside its interior", BubbleSelector.select(source, 64, 44) is SelectionResult.Rejected)
     }
 
-    @Test fun coloredPanelsRemainExplicitlyUnsupported() {
+    @Test fun anEmptyColoredPanelDoesNotBecomeAnEnclosedBubble() {
         val blue = Bitmap.createBitmap(120, 100, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(60, 190, 240)) }
         val rejected = BubbleSelector.select(blue, 60, 50)
         assertTrue(rejected is SelectionResult.Rejected)
-        assertTrue((rejected as SelectionResult.Rejected).reason.contains("Colored panels"))
+        assertTrue((rejected as SelectionResult.Rejected).reason.contains("text-area cleanup"))
     }
 
     @Test fun importAndEditsSurviveReopeningAndCanBeUndone() {

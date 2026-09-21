@@ -3,6 +3,7 @@ package com.ruyo.data
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Color
 import android.net.Uri
 import android.util.AtomicFile
 import android.util.Base64
@@ -260,7 +261,12 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             val obj = array.getJSONObject(index)
             val w = obj.getInt("width"); val h = obj.getInt("height")
             require(w > 0 && h > 0 && w.toLong() * h <= 900_000)
-            val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"))
+            val surface = obj.optJSONObject("surface")?.let { s ->
+                val corners = s.getJSONArray("corners"); require(corners.length() == 4)
+                com.ruyo.reader.BackgroundSurface(s.getInt("left"), s.getInt("top"), s.getInt("width"), s.getInt("height"), (0..3).map { corners.getInt(it) })
+            }
+            val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"),
+                surface, obj.optInt("textColor", Color.rgb(39, 42, 53)))
             BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat(),
                 languageTag = obj.optString("language", "ja"), fontFamily = obj.optString("fontFamily", "sans-serif"),
                 bold = obj.optBoolean("bold"), italic = obj.optBoolean("italic"),
@@ -273,6 +279,8 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             .put("language", edit.languageTag).put("fontFamily", edit.fontFamily).put("bold", edit.bold).put("italic", edit.italic)
             .put("sourceLetterHeight", edit.sourceLetterHeight?.toDouble()).put("matchSourceSize", edit.matchSourceSize)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
+            .put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
+                .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)) })
             .put("color", edit.region.backgroundColor).put("interior", pack(edit.region.interior.copyPixels())).put("erase", pack(edit.region.eraseMask))) }
     }.toString())
 

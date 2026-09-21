@@ -1,6 +1,8 @@
 package com.ruyo.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -155,13 +157,14 @@ private fun ChapterReaderTools(model: RuyoModel, modifier: Modifier) {
         IconButton(onClick = { settings = true }, modifier = Modifier.testTag("reading-translation-settings")) { Icon(AppIcons.Settings, "Reading controls", Modifier.size(21.dp)) }
     }
     if (settings) ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(Modifier.fillMaxWidth().navigationBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Reading controls", style = MaterialTheme.typography.titleLarge)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Hide title bar", Modifier.weight(1f))
                 Switch(model.readerImmersive, { model.readerImmersive = it })
             }
             LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy, tag = "reading-language")
+            SourceScriptPicker(model, !model.busy)
             Text("Preparation fills untranslated supported dialogue. Your saved edits are kept.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { settings = false; model.startPreparation() }, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("prepare-chapter")) { Text("Prepare whole chapter") }
             OutlinedButton(onClick = { settings = false; model.toggleSelection() }, modifier = Modifier.fillMaxWidth()) { Text("Edit bubbles") }
