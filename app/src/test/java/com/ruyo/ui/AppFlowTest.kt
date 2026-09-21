@@ -379,8 +379,9 @@ class AppFlowTest {
         awaitTag("web-reader")
         awaitState { !model.busy }
         compose.onNodeWithTag("scroll-translate").performClick()
-        awaitState { model.scrollTranslation?.notes?.keys?.containsAll(listOf(0, 1)) == true }
-        assertEquals(2, calls)
+        // Two source images intersect this taller reader; the third is prefetched.
+        awaitState { model.scrollTranslation?.notes?.keys?.containsAll(listOf(0, 1, 2)) == true }
+        assertEquals(3, calls)
         compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(2)
         awaitState { model.scrollTranslation?.notes?.containsKey(2) == true }
         assertEquals(3, calls)
