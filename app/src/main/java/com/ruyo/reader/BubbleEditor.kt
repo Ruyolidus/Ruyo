@@ -43,7 +43,7 @@ data class BubbleEdit(
 
 sealed interface SelectionResult {
     data class Selected(val region: BubbleRegion) : SelectionResult
-    data class Rejected(val reason: String) : SelectionResult
+    data class Rejected(val reason: String, val retryNearby: Boolean = false) : SelectionResult
 }
 
 /** A deliberately limited, user-seeded selector for enclosed, light, flat bubbles. */
@@ -55,19 +55,22 @@ object BubbleSelector {
         val pixels = IntArray(w * h)
         source.getPixels(pixels, 0, w, 0, 0, w, h)
         val direct = selectAt(pixels, w, h, x, y)
-        if (direct is SelectionResult.Selected || isLight(pixels[y * w + x])) return direct
-        // A fingertip often lands on a letter in a small bubble. Try nearby blank
-        // pixels, but accept only an interior that contains the original tap.
+        if (direct is SelectionResult.Selected && (direct.region.eraseMask.any { it } || minOf(direct.region.width, direct.region.height) > 72)) return direct
+        if (direct is SelectionResult.Rejected && isLight(pixels[y * w + x]) && !direct.retryNearby) return direct
+        // A tap can land on dark ink, a pale antialiased edge, or a white counter
+        // inside a letter. Try nearby background in all three cases, accepting
+        // only an interior that contains the original tap. An empty direct
+        // selection is retained if no enclosing lettering-bearing region exists.
         var attempts = 0
-        for (radius in listOf(2, 4, 7, 10, 14)) for ((dx, dy) in listOf(
+        for (radius in listOf(3, 7, 14, 24, 36)) for ((dx, dy) in listOf(
             0 to -radius, -radius to 0, radius to 0, 0 to radius,
             -radius to -radius, radius to -radius, -radius to radius, radius to radius,
         )) {
             val xx = x + dx; val yy = y + dy
             if (xx !in 0 until w || yy !in 0 until h || !isLight(pixels[yy * w + xx])) continue
-            if (attempts++ >= 8) return direct
+            if (attempts++ >= 32) return direct
             val nearby = selectAt(pixels, w, h, xx, yy)
-            if (nearby is SelectionResult.Selected && nearby.region.contains(x, y)) return nearby
+            if (nearby is SelectionResult.Selected && nearby.region.contains(x, y) && nearby.region.eraseMask.any { it }) return nearby
         }
         return direct
     }
@@ -108,7 +111,7 @@ object BubbleSelector {
         }
         if (edge) return reject("This area reaches the image edge. Choose a bubble with a complete outline.")
         val cw = right - left + 1; val ch = bottom - top + 1
-        if (cw < 16 || ch < 16 || tail < 80) return reject("There is too little bubble background at this image resolution. Try an empty area beside the letters, or a higher-quality source image.")
+        if (cw < 16 || ch < 16 || tail < 80) return SelectionResult.Rejected("There is too little bubble background at this image resolution. Try an empty area beside the letters, or a higher-quality source image.", retryNearby = true)
         if (cw.toLong() * ch > 900_000) return reject("This area is too large. Choose a smaller, enclosed speech bubble.")
 
         // The connected background excludes lettering. Fill enclosed holes to recover the interior.

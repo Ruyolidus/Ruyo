@@ -107,10 +107,10 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                     break
                 }
                 if (session.images.size >= com.ruyo.data.LocalBookStore.MAX_PAGES) {
-                model.webLoadingMessage("200-image session limit reached. Use Website for the remaining pages.")
-                break
-            }
-            val anchor = session.images.getOrNull(model.webVisible.firstOrNull() ?: model.webPosition.first)
+                    model.webLoadingMessage("200-image session limit reached. Use Website for the remaining pages.")
+                    break
+                }
+                val anchor = session.images.getOrNull(model.webVisible.firstOrNull() ?: model.webPosition.first)
                 val nearEnd = (model.webVisible.maxOrNull() ?: model.webPosition.first) >= session.images.size - 3
                 view.evaluateForReader(LiveChapter.advanceScript(anchor?.url, model.webFraction, nearEnd))
                 // Give scroll listeners and IntersectionObserver a frame before discovery.

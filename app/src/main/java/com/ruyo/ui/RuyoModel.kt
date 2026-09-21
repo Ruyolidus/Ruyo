@@ -506,6 +506,8 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                 if (generation != lessonGeneration || lesson != line || activeProfileId != profile.id) return@launch
                 explanation = value
                 if (cached == null) withContext(Dispatchers.IO) { runCatching { lessonCache.write(key, value) } }
+            } catch (_: TimeoutCancellationException) {
+                if (generation == lessonGeneration) explanationError = "The provider took too long. Retry or choose a faster model."
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 if (generation == lessonGeneration) explanationError = (error as? TranslationFailure)?.message ?: "Could not prepare this lesson. Check your provider and try again."

@@ -434,6 +434,31 @@ class AppFlowTest {
         source.recycle()
     }
 
+    @Test fun closingALessonRejectsALateExplanationAndDoesNotCacheIt() {
+        val release = CompletableDeferred<Unit>(); val entered = AtomicBoolean(); val returned = AtomicBoolean()
+        var calls = 0
+        val model = RuyoModel(context, TestProfiles(), explanationService = ExplanationService { _, _, _ ->
+            calls++
+            if (calls == 1) withContext(NonCancellable) { entered.set(true); release.await(); returned.set(true) }
+            AiLesson("A greeting.", "hello", listOf(LessonPoint("Hello", "A greeting.")),
+                listOf(LessonWord("hello", "", "a greeting", "")), listOf(LessonPoint("Hello, Sam.", "Greeting Sam.")),
+                listOf(LessonExercise("Name one greeting.", "Hello.", "Hello is a greeting.")))
+        })
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        val line = com.ruyo.data.SavedLine("lesson-cancellation", "Hello.", "Fixture", languageTag = "en")
+        compose.runOnIdle { model.showLesson(line) }
+        awaitState { entered.get() }
+        compose.onNodeWithContentDescription("Close lesson").performClick()
+        release.complete(Unit)
+        awaitState { returned.get() }
+        assertNull(model.lesson); assertNull(model.explanation)
+        compose.runOnIdle { model.showLesson(line) }
+        awaitState { model.explanation != null && !model.explanationBusy }
+        assertEquals(2, calls)
+        compose.onNodeWithContentDescription("Close lesson").performClick()
+    }
+
     private class TestProfiles : ProfileStore {
         private var entries = listOf(ProviderSecret(ProviderProfile(name = "Test profile", kind = ProviderKind.OPENAI, baseUrl = "https://api.openai.com/v1", model = "test-model", hasKey = true), "fixture-only"))
         override fun list() = entries.map { it.profile }

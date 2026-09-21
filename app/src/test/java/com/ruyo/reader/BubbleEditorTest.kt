@@ -22,6 +22,29 @@ import java.io.File
 class BubbleEditorTest {
     @Before fun clearFiles() { File(RuntimeEnvironment.getApplication().filesDir, "books").deleteRecursively() }
 
+    @Test fun tapsOnPaleLetterEdgesAndWhiteCountersFindTheEnclosingBubble() {
+        val source = android.graphics.Bitmap.createBitmap(240, 240, android.graphics.Bitmap.Config.ARGB_8888)
+        source.eraseColor(android.graphics.Color.DKGRAY)
+        val canvas = android.graphics.Canvas(source)
+        val paint = android.graphics.Paint().apply { color = android.graphics.Color.WHITE }
+        canvas.drawCircle(120f, 120f, 100f, paint)
+        paint.color = android.graphics.Color.BLACK
+        canvas.drawCircle(120f, 120f, 21f, paint)
+        paint.color = android.graphics.Color.WHITE
+        canvas.drawCircle(120f, 120f, 11f, paint)
+        // A separate pale island imitates an antialiased stroke edge.
+        paint.color = android.graphics.Color.rgb(195, 195, 195)
+        canvas.drawRect(155f, 119f, 158f, 122f, paint)
+        for ((x, y) in listOf(120 to 120, 156 to 120, 140 to 120)) {
+            val selected = BubbleSelector.select(source, x, y)
+            assertTrue(selected is SelectionResult.Selected)
+            val region = (selected as SelectionResult.Selected).region
+            assertTrue(region.width > 180 && region.height > 180)
+            assertTrue(region.contains(x, y))
+        }
+        source.recycle()
+    }
+
     @Test fun selectsEnclosedBubbleAndPreservesUnmaskedArtwork() {
         val page = SampleChapter.build().first()
         val selection = BubbleSelector.select(page.original, 450, 105)

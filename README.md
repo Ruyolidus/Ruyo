@@ -30,7 +30,7 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   and skips completed dialogue on revisits. Start/Pause is explicit for each session.
 - Website **Read** keeps the attached website alive behind a temporary native
   reader. It advances the website near your reading position and incorporates newly
-  loaded chapter images, including short strips in recognised chapter containers. Tap a bubble to use the same automatic editor, then return
+  loaded chapter images, including short strips in recognised chapter containers. Tap translated dialogue to study, or untranslated dialogue to use the automatic editor, then return
   to the same reading position. No library import is required.
 - A compact browser address icon at the top right. Tap to expand and focus the field; successful navigation collapses it again.
 - A persistent default target language and per-edit language choices, including custom language codes. Existing Japanese edits retain their language.
@@ -65,7 +65,15 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   the preview. Short dialogue is no longer enlarged to fill an empty bubble.
 - Every successful replacement preview scrolls into view. Fit failures stay visible
   in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
-- Sample grammar/vocabulary lessons and saved sentences, including your own text.
+- Tap a translated bubble in either reader for an automatic AI lesson: meaning,
+  grammar, vocabulary, original examples, and exercises with revealable answers.
+  Japanese vocabulary can include approximate JLPT estimates. Explanations are in
+  English, use the active provider, and send only the tapped dialogue text.
+  Up to 100 validated lessons are cached privately on this device; changing text,
+  language, or model creates a different cache entry. Android may clear this cache.
+- The lesson sheet has an **Edit** button to revise the same bubble and return to
+  the same reading position. Sample lessons remain built-in; saved sentences can
+  also open generated lessons.
 
 **Automatic translation is a first preview for enclosed, light, flat dialogue bubbles.**
 The source-script OCR model must match the comic. Detection uses OCR line positions
@@ -90,7 +98,7 @@ Recognition uses the bounded working image (up to 6 MP), so tiny original letter
 can still need correction. Latin, Japanese, Chinese, Korean, and Devanagari OCR are
 bundled; other source scripts can be typed manually. Target language is configurable,
 with Japanese as default. Gradient/narration repair, text over artwork,
-original-resolution tiling, custom font import, generated lessons, and CBZs remain
+original-resolution tiling, custom font import, and CBZs remain
 future work. No opaque rectangular covers are used as a fallback.
 
 New imports retain original image bytes in private storage plus bounded working

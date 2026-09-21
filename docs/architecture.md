@@ -170,8 +170,7 @@ responses are reused. Models and network conditions still determine API latency.
    per-region responses, and persistent revision-aware caches.
 3. Improve source adapters for specific lazy-loading and virtualized sites. Keep
    native reading and provider access isolated from page scripts.
-4. Generate language-aware grammar/vocabulary lessons bound to the displayed
-   translation revision. Keep lesson and translation profiles independently selectable.
+4. Add selectable explanation languages and an independently chosen lesson profile.
 5. Add manual narration regions and gradient/textured-background repair with
    explicit quality checks, plus licensed custom font import.
 6. Extend local import with CBZs and permitted source adapters. On-phone inference
@@ -211,3 +210,22 @@ make some families look similar on a particular device.
 The browser address entry is collapsed into a top-right action, retains typed text
 during open/close, focuses only on explicit expansion, and closes on successful
 navigation or Back. The chapter remains visible while the address field is hidden.
+
+
+## AI study sheets
+
+Translated bubble taps open the same study sheet in local and website readers.
+The sheet launches a text-only explanation request through the native provider
+transport. It shows meaning, grammar, vocabulary, examples, and practice with
+answers hidden until requested. Explanations are English in this preview;
+Japanese JLPT labels are estimates, never official classifications.
+
+LessonCache uses a SHA-256 key over the exact dialogue, target language, English
+explanation language, prompt version, provider protocol, endpoint, and model.
+The private cache keeps at most 100 validated JSON lessons, each at most 64 KiB,
+with atomic writes. No credential is included in its key or contents. Android
+can reclaim the cache; saving a sentence preserves the text, not a permanent
+lesson archive. Provider calls remain bounded, cancellable, and text-only.
+Closing the sheet or changing profile invalidates its generation so late results
+cannot populate another lesson or enter the cache. The editor action reloads the
+current saved edit by ID; website edits resolve image URLs, not stale indices.
