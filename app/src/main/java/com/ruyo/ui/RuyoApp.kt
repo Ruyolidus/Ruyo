@@ -86,12 +86,13 @@ private fun AppContent(model: RuyoModel) {
         }
     }
     val home = model.route == "home"
+    val reading = model.route == "book" || model.route == "webread"
     Scaffold(
         modifier = Modifier.testTag("app-root"),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbars, Modifier.imePadding().padding(bottom = if (home) 0.dp else 96.dp)) },
         topBar = {
-            Column {
+            if (!reading || !model.readerImmersive) Column {
                 AppBar(
                     title = when (model.route) {
                         "sample" -> "Before the rain"
@@ -107,6 +108,7 @@ private fun AppContent(model: RuyoModel) {
                     },
                     back = if (home) null else ({ if (!model.busy) back() }),
                     actions = {
+                        if (reading) IconButton(onClick = { model.readerImmersive = true }) { Icon(AppIcons.Zoom, "Hide reader toolbar") }
                         when {
                             home && model.tab == "library" -> {
                                 IconButton(onClick = model::browse, enabled = !model.busy) { Icon(AppIcons.Web, "Browse websites") }
@@ -146,12 +148,13 @@ private fun AppContent(model: RuyoModel) {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
+            if (model.webHostActive) WebBrowserScreen(model)
             when (model.route) {
                 "sample" -> SampleReader(model)
                 "book" -> key(model.chapter?.id) { BookReader(model) }
                 "pages" -> ChapterPagesScreen(model) { pickImages(model.chapter?.id) }
                 "import" -> ImportReviewScreen(model) { pickImages(model.importing?.appendTo) }
-                "web" -> WebBrowserScreen(model)
+                "web" -> if (!model.webHostActive) WebBrowserScreen(model)
                 "webread" -> WebReaderScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
                 "areas" -> model.areaSelection?.let { BubbleAreasScreen(model, it) }

@@ -29,15 +29,18 @@ internal fun WebReaderScreen(model: RuyoModel) {
         }
     }
     LaunchedEffect(scroll, session.id) {
-        snapshotFlow { scroll.layoutInfo.visibleItemsInfo.map { it.index } }.distinctUntilChanged().collect { model.scrollTranslation?.viewport(it) }
+        snapshotFlow {
+            val visible = scroll.layoutInfo.visibleItemsInfo.filter { it.index < session.images.size }
+            val first = visible.firstOrNull()
+            visible.map { it.index } to (if (first == null || first.size == 0) 0f else (-first.offset).coerceAtLeast(0).toFloat() / first.size)
+        }.distinctUntilChanged().collect { (indices, fraction) ->
+            model.webViewport(indices, fraction)
+            model.scrollTranslation?.viewport(indices)
+        }
     }
     DisposableEffect(session.id) { onDispose { model.pauseScrolling() } }
-    Column(Modifier.fillMaxSize().testTag("web-reader")) {
-        ReaderControls(model.japanese, { model.japanese = it },
-            ((scroll.firstVisibleItemIndex + 1).coerceAtMost(session.images.size)).toString() + " / " + session.images.size, "Translated")
-        ScrollTranslationControls(model)
-        model.selectionError?.let { Text(it, Modifier.padding(horizontal = 16.dp, vertical = 8.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-        LazyColumn(Modifier.fillMaxWidth().weight(1f).background(Color(0xFF25282B)).testTag("web-reading-scroll"), state = scroll) {
+    Box(Modifier.fillMaxSize().background(Color(0xFF25282B)).testTag("web-reader")) {
+        LazyColumn(Modifier.fillMaxSize().background(Color(0xFF25282B)).testTag("web-reading-scroll"), state = scroll) {
             itemsIndexed(session.images, key = { _, image -> image.url }) { index, image ->
                 var retry by remember(image.url) { mutableIntStateOf(0) }
                 val loaded by produceState<Result<OpenBook>?>(null, session.id, index, model.pageRevision, retry) {
@@ -58,44 +61,82 @@ internal fun WebReaderScreen(model: RuyoModel) {
                     if (!model.busy) model.editWebBubble(index, x, y)
                 }
             }
-            item { Text("End of loaded chapter images", Modifier.fillMaxWidth().padding(24.dp), color = Color.White, style = MaterialTheme.typography.bodySmall) }
+            item {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp).padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(if (session.images.isEmpty()) "Waiting for chapter images…" else model.webLoadStatus, color = Color.White, style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = model::returnToWebsite) { Text("Website", color = Color.White) }
+                }
+            }
         }
-        Surface {
-            Text(model.scrollTranslation?.notes?.get(scroll.firstVisibleItemIndex) ?: "Tap a bubble to edit · Temporary reading session",
-                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        ReaderOverlay(model, ((scroll.firstVisibleItemIndex + 1).coerceAtMost(session.images.size)).toString() + " / " + session.images.size,
+            Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(12.dp))
+        model.selectionError?.let { error ->
+            Surface(Modifier.align(Alignment.TopCenter).padding(12.dp), color = MaterialTheme.colorScheme.errorContainer) {
+                Text(error, Modifier.padding(12.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall)
+            }
         }
     }
 }
 
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun ScrollTranslationControls(model: RuyoModel) {
+internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier = Modifier) {
     val translation = model.scrollTranslation ?: return
     var settings by rememberSaveable { mutableStateOf(false) }
-    Surface(color = MaterialTheme.colorScheme.surface) {
-        Column {
-            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
-                    Text(translation.status ?: if (translation.running) "Translate as you scroll" else TextLanguages.label(model.targetLanguage),
-                        style = MaterialTheme.typography.labelMedium)
-                    Text(translation.error ?: model.activeProfile?.name ?: "Choose an AI provider", style = MaterialTheme.typography.bodySmall,
-                        color = if (translation.error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
-                }
+    Surface(modifier, shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), tonalElevation = 2.dp) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (!model.readerImmersive) {
+                if (translation.running && translation.status != null) CircularProgressIndicator(Modifier.padding(start = 12.dp).size(14.dp), strokeWidth = 2.dp)
                 TextButton(onClick = { if (translation.running) model.pauseScrolling() else model.startScrolling() }, enabled = !model.busy,
-                    modifier = Modifier.testTag("scroll-translate")) { Text(if (translation.running) "Pause" else "Translate") }
-                IconButton(onClick = { settings = !settings }, modifier = Modifier.testTag("reading-translation-settings")) { Icon(AppIcons.Settings, "Translation settings", Modifier.size(20.dp)) }
+                    modifier = Modifier.testTag("scroll-translate")) {
+                    Text(if (translation.running) "Pause" else if (translation.error != null) "Retry" else "Translate")
+                }
             }
-            if (settings) Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            IconButton(onClick = { settings = true }, modifier = Modifier.testTag("reading-translation-settings")) {
+                Icon(AppIcons.Settings, "Reading controls", Modifier.size(21.dp), tint = if (translation.error == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
+            }
+        }
+    }
+    if (settings) ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            item {
+                Text("Reading · " + detail, style = MaterialTheme.typography.titleLarge)
+                Text(translation.error ?: translation.status ?: if (translation.running) "Ready for the next image" else "Translation paused",
+                    Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall,
+                    color = if (translation.error == null) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error)
+            }
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Minimal reader", Modifier.weight(1f))
+                    Switch(checked = model.readerImmersive, onCheckedChange = { model.readerImmersive = it }, modifier = Modifier.testTag("minimal-reader"))
+                }
+                ReaderControls(model.japanese, { model.japanese = it }, "", "Translated")
+                Button(onClick = { if (translation.running) model.pauseScrolling() else model.startScrolling(); settings = false }, modifier = Modifier.fillMaxWidth()) {
+                    Text(if (translation.running) "Pause translation" else "Translate as you scroll")
+                }
+            }
+            item {
                 LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy, tag = "reading-language")
                 var scripts by remember { mutableStateOf(false) }
                 Box {
-                    OutlinedButton(onClick = { scripts = true }) { Text("Source: " + model.ocrScript.label) }
+                    TextButton(onClick = { scripts = true }) { Text("Source: " + model.ocrScript.label) }
                     DropdownMenu(expanded = scripts, onDismissRequest = { scripts = false }) {
                         OcrScript.entries.forEach { script -> DropdownMenuItem(text = { Text(script.label) }, onClick = { model.changeOcrScript(script); scripts = false }) }
                     }
                 }
-                TextButton(onClick = model::editProfiles, modifier = Modifier.testTag("reading-providers")) { Text("AI providers") }
-                Text("Translate processes visible images and one ahead with your selected provider. Opening a bubble recognizes, translates, and previews it automatically. Saved edits stay as you set them.",
+                TextButton(onClick = { settings = false; model.editProfiles() }, modifier = Modifier.testTag("reading-providers")) { Text(model.activeProfile?.name ?: "Choose AI provider") }
+            }
+            item {
+                Text("Only recognised dialogue text is sent to your provider. Comic images stay on this device. Nearby bubbles are translated in small groups; saved swaps are reused.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Pinch to zoom. Tap web dialogue to edit; use the pencil for local chapters.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
+            }
+            item {
+                if (model.route == "webread") OutlinedButton(onClick = { settings = false; model.returnToWebsite() }, modifier = Modifier.fillMaxWidth()) { Text("Return to website") }
+                else OutlinedButton(onClick = { settings = false; model.toggleSelection() }, modifier = Modifier.fillMaxWidth()) { Text(if (model.selecting) "Finish editing bubbles" else "Edit bubbles") }
+                TextButton(onClick = { settings = false; model.home() }, modifier = Modifier.fillMaxWidth()) { Text("Library") }
             }
         }
     }

@@ -19,6 +19,7 @@ import com.ruyo.sample.SamplePage
 import com.ruyo.web.WebChapter
 import com.ruyo.web.WebImageDownload
 import com.ruyo.web.WebReadingSession
+import com.ruyo.web.LiveChapter
 import kotlinx.coroutines.*
 import kotlin.math.ceil
 import kotlin.math.hypot
@@ -63,6 +64,32 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var selecting by mutableStateOf(false)
     var selectionError by mutableStateOf<String?>(null); private set
     var japanese by mutableStateOf(true)
+    var webHostActive by mutableStateOf(false); private set
+    var foreground by mutableStateOf(true); private set
+    var readerImmersive by mutableStateOf(false)
+    var webLoadStatus by mutableStateOf("Watching for more chapter images…"); private set
+    var webVisible by mutableStateOf<List<Int>>(emptyList()); private set
+    var webFraction by mutableStateOf(0f); private set
+    fun appForeground(value: Boolean) { foreground = value; if (!value) pauseScrolling() }
+    fun webViewport(indices: List<Int>, fraction: Float) { webVisible = indices; webFraction = fraction }
+    suspend fun acceptWebDiscovery(sessionId: String, source: WebChapter, cookies: Map<String, String>) {
+        val session = webReading ?: return
+        if (session.id != sessionId || route != "webread" || source.url != session.chapter.url) return
+        session.updateCookies(cookies)
+        val merged = LiveChapter.merge(session.images, source.images)
+        if (merged == session.images) return
+        val appendOnly = merged.take(session.images.size) == session.images
+        val resume = scrollTranslation?.running == true
+        val anchor = session.images.getOrNull(webPosition.first)?.url
+        if (!appendOnly) { scrollTranslation?.pause()?.join(); scrollTranslation?.reset() }
+        if (webReading !== session || route != "webread") return
+        session.updateImages(merged)
+        if (!appendOnly && anchor != null) webPosition = merged.indexOfFirst { it.url == anchor }.coerceAtLeast(0) to webPosition.second
+        scrollTranslation?.resize(merged.size)
+        if (!appendOnly && resume) scrollTranslation?.start()
+        webLoadStatus = "More chapter images loaded"
+    }
+    fun webLoadingMessage(value: String) { webLoadStatus = value }
     var webUrl by mutableStateOf("")
     var webAddressExpanded by mutableStateOf(false)
     var targetLanguage by mutableStateOf(runCatching { TextLanguages.normalize(prefs.getString("targetLanguage", "ja") ?: "ja") }.getOrDefault("ja")); private set
@@ -87,11 +114,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private val editorReturnRoute get() = if (editorWebIndex != null) "webread" else "book"
 
     fun readWebsite(source: WebChapter, cookies: Map<String, String>, userAgent: String) = task {
-        require(source.images.isNotEmpty()) { "No chapter images found. Scroll the website to load its images, then try Read again." }
         scrollTranslation?.pause()?.join()
         val previous = webReading
         if (previous != null && previous.chapter.url == source.url && previous.images.map { it.url } == source.images.map { it.url }) {
-            route = "webread"; japanese = true; selectionError = null
+            route = "webread"; readerImmersive = false; japanese = true; selectionError = null
             configureScroll(previous.store, previous.images.size, { previous.load(it) }, { previous.changed() })
             return@task
         }
@@ -99,6 +125,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         withContext(Dispatchers.IO) { WebReadingSession.clearAbandoned(getApplication()) }
         val session = webSessionFactory(getApplication(), source, cookies, userAgent)
         webReading = session; webPosition = 0 to 0; editorWebIndex = null
+        webLoadStatus = "Watching for more chapter images…"
         route = "webread"; japanese = true; selectionError = null
         configureScroll(session.store, source.images.size, { session.load(it) }, { session.changed() })
     }
@@ -143,14 +170,14 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun changeTheme(value: String) { theme = value; prefs.edit().putString("theme", value).apply() }
     fun home() {
-        cancelAi(); pauseScrolling(); areaSelection = null; editorWebIndex = null
+        cancelAi(); pauseScrolling(); webHostActive = false; readerImmersive = false; areaSelection = null; editorWebIndex = null
         flushPosition()
         route = "home"; selecting = false; draft = null; opened = null; chapter = null
         viewModelScope.launch { pageLoader.clear() }
     }
     fun changeTargetLanguage(value: String) { scrollTranslation?.reset(); targetLanguage = TextLanguages.normalize(value); prefs.edit().putString("targetLanguage", targetLanguage).apply() }
     fun openSample() { route = "sample"; japanese = true }
-    fun browse() { pauseScrolling(); route = "web" }
+    fun browse() { pauseScrolling(); webHostActive = true; route = "web" }
     fun managePages() { pauseScrolling(); selecting = false; route = "pages" }
     fun reader() { route = "book" }
 

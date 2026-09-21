@@ -13,7 +13,7 @@ data class TranslationSettings(val profileId: String, val language: String, val 
 /** One worker, visible images first, then one image ahead. Viewport changes never restart a paid call. */
 class ScrollTranslation(
     private val scope: CoroutineScope,
-    private val pageCount: Int,
+    private var pageCount: Int,
     private val process: suspend (Int, () -> Boolean, (String) -> Unit) -> String?,
 ) {
     var running by mutableStateOf(false); private set
@@ -24,7 +24,10 @@ class ScrollTranslation(
     private var window = emptyList<Int>()
     private var job: Job? = null
     private var generation = 0
+    private var visible = emptyList<Int>()
+    fun resize(count: Int) { pageCount = count; viewport(visible) }
     fun viewport(visible: List<Int>) {
+        this.visible = visible
         val valid = visible.distinct().filter { it in 0 until pageCount }.sorted()
         window = (valid + listOfNotNull(valid.lastOrNull()?.plus(1)?.takeIf { it < pageCount })).distinct()
         schedule()
@@ -75,50 +78,71 @@ class PageTranslationPipeline(
     private val profiles: ProfileStore,
     private val translate: TranslationService,
 ) {
-    private val unfitted = mutableSetOf<String>()
+    private val lineCache = object : java.util.LinkedHashMap<String, List<OcrLine>>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<OcrLine>>?) = size > 3
+    }
+    private val replies = mutableMapOf<String, String>()
     suspend fun process(page: OpenBook, settings: TranslationSettings, keepGoing: () -> Boolean, status: (String) -> Unit,
         changed: suspend () -> Unit): String? {
         if (!keepGoing()) return null
-        status("Recognizing dialogue on this device…")
-        val lines = withContext(Dispatchers.Default) { ocr.lines(page.original, settings.script) }
-        val groups = withContext(Dispatchers.Default) {
-            AutoBubbleDetector.detect(page.original, lines) { store.areaCenters(page, it) }
+        val sourceKey = page.book.id + ":" + page.page.id + ":" + settings.script.name
+        val lines = lineCache[sourceKey] ?: run {
+            status("Recognizing dialogue on this device…")
+            withContext(Dispatchers.Default) { ocr.lines(page.original, settings.script) }.also { lineCache[sourceKey] = it }
         }
+        val groups = withContext(Dispatchers.Default) { AutoBubbleDetector.detect(page.original, lines) { store.areaCenters(page, it) } }
+        if (!keepGoing()) return null
         val secret = withContext(Dispatchers.IO) { profiles.get(settings.profileId) }
         val existing = page.edits.toMutableList()
-        var skipped = 0; var count = 0
+        val candidates = mutableListOf<DetectedBubble>()
         for (group in groups) {
             currentCoroutineContext().ensureActive()
             if (!keepGoing()) return null
             if (group.centers.size > 1 && existing.none { it.region.overlaps(group.region) }) {
                 withContext(Dispatchers.IO) { store.saveAreas(page, group.region, group.centers) }
             }
-            for (bubble in group.bubbles) {
+            candidates += group.bubbles.filter { bubble -> existing.none { it.region.overlaps(bubble.region) } }
+        }
+        val pending = candidates.take((40 - existing.size).coerceAtLeast(0))
+        var skipped = candidates.size - pending.size; var count = 0; var offset = 0
+        fun key(bubble: DetectedBubble) = listOf(sourceKey, bubble.region.left, bubble.region.top, bubble.region.width, bubble.region.height,
+            secret.profile.id, secret.profile.baseUrl, secret.profile.model, settings.language, bubble.source).joinToString("|")
+        while (offset < pending.size) {
+            currentCoroutineContext().ensureActive()
+            if (!keepGoing()) return null
+            val batch = mutableListOf<DetectedBubble>()
+            var characters = 0
+            while (offset < pending.size && batch.size < 4 && characters + pending[offset].source.length <= 6000) {
+                val bubble = pending[offset++]; batch += bubble; characters += bubble.source.length
+            }
+            val missing = batch.mapIndexedNotNull { i, bubble -> if (key(bubble) !in replies) SourceDialogue(i.toString(), bubble.source) else null }
+            if (missing.isNotEmpty()) {
+                status("Translating " + missing.size + if (missing.size == 1) " bubble…" else " bubbles together…")
+                val result = translate.translateBatch(secret, missing, settings.language)
                 currentCoroutineContext().ensureActive()
-                if (!keepGoing()) return null
-                if (existing.any { it.region.overlaps(bubble.region) }) continue
-                if (existing.size >= 40) { skipped++; continue }
-                val attempt = listOf(page.book.id, page.page.id, bubble.region.left, bubble.region.top, bubble.region.width, bubble.region.height,
-                    settings.profileId, settings.language, bubble.source).joinToString("|")
-                if (attempt in unfitted) { skipped++; continue }
+                require(result.keys == missing.map { it.id }.toSet() && result.values.all { it.isNotBlank() && it.length <= 512 }) {
+                    "The provider did not return every dialogue separately. The original is unchanged."
+                }
+                missing.forEach { item -> replies[key(batch[item.id.toInt()])] = requireNotNull(result[item.id]) }
+            }
+            var saved = false
+            for (bubble in batch) {
+                currentCoroutineContext().ensureActive()
                 val sourceHeight = withContext(Dispatchers.Default) { SourceLettering.estimateHeight(bubble.region) }
-                status("Translating dialogue " + (count + 1) + "…")
-                val text = translate.translate(secret, bubble.source, settings.language)
-                currentCoroutineContext().ensureActive()
-                require(text.isNotBlank() && text.length <= 512) { "The translation exceeds the area limit. Tap the bubble to edit it." }
-                val edit = BubbleEdit(region = bubble.region, japanese = text, margin = maxOf(2, minOf(bubble.region.width, bubble.region.height) / 14),
-                    languageTag = settings.language, sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
+                val edit = BubbleEdit(region = bubble.region, japanese = requireNotNull(replies[key(bubble)]),
+                    margin = maxOf(2, minOf(bubble.region.width, bubble.region.height) / 14), languageTag = settings.language,
+                    sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
                 val fits = withContext(Dispatchers.Default) {
                     BubbleEditRenderer.preview(page.original, edit).fold(onSuccess = { preview ->
                         preview.crop.recycle(); preview.fit.ink.recycle(); true
                     }, onFailure = { false })
                 }
-                if (!fits) { unfitted += attempt; skipped++; continue }
+                if (!fits) { skipped++; continue }
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) { store.saveEdit(page.book.id, page.original, edit, page.page.id) }
-                existing += edit; count++
-                changed()
+                existing += edit; count++; saved = true
             }
+            if (saved) changed()
         }
         return when {
             groups.all { it.bubbles.isEmpty() } -> "No supported dialogue bubbles found. Tap a bubble to edit."

@@ -24,13 +24,13 @@ object WebAddress {
     fun imageName(url: String): String = runCatching { URI(url).path.substringAfterLast('/').take(160).ifBlank { "Web image" } }.getOrDefault("Web image")
 }
 
-data class WebImage(val url: String, val name: String, val width: Int, val height: Int, val excludedReason: String? = null) {
-    val likelyPage: Boolean get() = excludedReason == null && (width >= 300 && height >= 250 || width == 0 || height == 0)
+data class WebImage(val url: String, val name: String, val width: Int, val height: Int, val excludedReason: String? = null, val chapterImage: Boolean = false) {
+    val likelyPage: Boolean get() = excludedReason == null && (chapterImage || width >= 300 && height >= 120 || width == 0 || height == 0)
 }
 data class WebChapter(val url: String, val title: String, val images: List<WebImage>)
 
 object WebImageDiscovery {
-    // Called only by the native Find images button. No addJavascriptInterface / native bridge.
+    // Read-only discovery, used by Import and the live reading session. No native JS bridge.
     val script = """
         (function() {
           const seen = new Set(), images = [], otherImages = [];
@@ -50,6 +50,7 @@ object WebImageDiscovery {
             if (images.length >= 200) break;
             const style = getComputedStyle(img);
             if (style.display === 'none' || style.visibility === 'hidden') continue;
+            const chapterImage = readers.some(node => node.contains(img));
             const lazy = img.getAttribute('data-src') || img.getAttribute('data-lazy-src') || img.getAttribute('data-original');
             const raw = lazy || responsiveSource(img) || img.currentSrc || img.src;
             if (!raw) continue;
@@ -64,12 +65,12 @@ object WebImageDiscovery {
               const loaded = url.href === img.currentSrc || url.href === img.src;
               const w = (loaded ? img.naturalWidth : 0) || Number(img.getAttribute('width')) || 0;
               const h = (loaded ? img.naturalHeight : 0) || Number(img.getAttribute('height')) || 0;
-              if (w > 0 && h > 0 && (w < 160 || h < 120)) continue;
+              if (w > 0 && h > 0 && (w < 160 || (!chapterImage && h < 120))) continue;
               // Comment copies cannot suppress a later genuine chapter image.
               const key = (excludedReason ? 'other:' : 'page:') + url.href;
               if (seen.has(key)) continue;
               seen.add(key);
-              const item = {url: url.href, width: w, height: h, excludedReason: excludedReason};
+              const item = {url: url.href, width: w, height: h, excludedReason: excludedReason, chapterImage: chapterImage};
               if (!excludedReason) images.push(item);
               else if (otherImages.length < 200) otherImages.push(item);
             } catch (_) {}
@@ -91,7 +92,7 @@ object WebImageDiscovery {
                 val item = array.getJSONObject(i)
                 val link = WebAddress.normalize(item.getString("url"))
                 val reason = item.optString("excludedReason").takeIf { it in setOf("Comment image", "Navigation or profile image", "Outside the chapter area") }
-                WebImage(link, WebAddress.imageName(link), item.optInt("width").coerceAtLeast(0), item.optInt("height").coerceAtLeast(0), reason)
+                WebImage(link, WebAddress.imageName(link), item.optInt("width").coerceAtLeast(0), item.optInt("height").coerceAtLeast(0), reason, item.optBoolean("chapterImage"))
             }.getOrNull()
         }.distinctBy { it.url }
         return WebChapter(url, data.optString("title").take(120).ifBlank { URI(url).host }, images)

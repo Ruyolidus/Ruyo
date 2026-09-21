@@ -16,9 +16,11 @@ class MainActivity : ComponentActivity() {
         setContent { RuyoApp(model) }
     }
 
+    override fun onStart() { super.onStart(); model.appForeground(true) }
+
     override fun onStop() {
         model.flushPosition()
-        model.pauseScrolling()
+        model.appForeground(false)
         super.onStop()
     }
 }

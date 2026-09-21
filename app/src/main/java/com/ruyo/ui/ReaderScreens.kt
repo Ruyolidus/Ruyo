@@ -74,16 +74,15 @@ internal fun BookReader(model: RuyoModel) {
         snapshotFlow { scroll.layoutInfo.visibleItemsInfo.map { it.index } }.distinctUntilChanged().collect { model.scrollTranslation?.viewport(it) }
     }
     DisposableEffect(book.id) { onDispose { model.flushPosition(); model.pauseScrolling() } }
-    Column(Modifier.fillMaxSize().testTag("book-reader")) {
-        ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)} / ${book.pages.size}", translatedLabel = "Translated")
-        ScrollTranslationControls(model)
+    Box(Modifier.fillMaxSize().testTag("book-reader")) {
+      Column(Modifier.fillMaxSize()) {
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
                 Text("Tap inside a plain, light bubble. Pinch to reach small dialogue.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
                 model.selectionError?.let { Text(it, Modifier.padding(top = 8.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer) }
             }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("chapter-scroll"), state = scroll) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("chapter-scroll"), state = scroll, contentPadding = PaddingValues(bottom = 68.dp)) {
             itemsIndexed(book.pages, key = { _, page -> page.id }) { index, page ->
                 var retry by remember(page.id) { mutableIntStateOf(0) }
                 val loaded by produceState<Result<OpenBook>?>(null, book.id, page.id, model.pageRevision, retry) {
@@ -106,11 +105,9 @@ internal fun BookReader(model: RuyoModel) {
                 }
             }
         }
-        Surface(color = MaterialTheme.colorScheme.surface) {
-            Text(if (model.selecting) "Plain bubbles · Tap inside an existing edit to revise it" else "Pencil to edit · Tap a translation to save · Pinch to zoom",
-                Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp).navigationBarsPadding(),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+      }
+      ReaderOverlay(model, ((scroll.firstVisibleItemIndex + 1).coerceAtMost(book.pages.size)).toString() + " / " + book.pages.size,
+          Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(12.dp))
     }
 }
 

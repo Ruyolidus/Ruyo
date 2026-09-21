@@ -16,6 +16,12 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import com.ruyo.web.LiveChapter
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.zIndex
@@ -45,8 +51,8 @@ internal fun WebBrowserScreen(model: RuyoModel) {
     var clearData by remember { mutableStateOf(false) }
     val keyboard = LocalSoftwareKeyboardController.current
     val addressFocus = remember { FocusRequester() }
-    LaunchedEffect(model.webAddressExpanded) {
-        if (model.webAddressExpanded) { addressFocus.requestFocus(); keyboard?.show() }
+    LaunchedEffect(model.webAddressExpanded, model.route) {
+        if (model.webAddressExpanded && model.route == "web") { addressFocus.requestFocus(); keyboard?.show() }
         else keyboard?.hide()
     }
     fun navigate() {
@@ -66,8 +72,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                 runCatching { WebImageDiscovery.parse(result, expected) }.onSuccess { source ->
                     if (read) {
                         val images = source.images.filter { it.likelyPage }
-                        if (images.isEmpty()) failure = "No chapter images found. Scroll the website to load its images, then try Read again."
-                        else {
+                        run {
                             val cookies = images.associate { it.url to CookieManager.getInstance().getCookie(it.url).orEmpty() }
                             model.readWebsite(source.copy(images = images), cookies, view.settings.userAgentString.orEmpty())
                         }
@@ -77,11 +82,34 @@ internal fun WebBrowserScreen(model: RuyoModel) {
             }
         }
     }
-    BackHandler(canGoBack && !model.busy) { web?.goBack() }
-    BackHandler(model.webAddressExpanded && !model.busy) { model.webAddressExpanded = false }
-    Column(Modifier.fillMaxSize().imePadding().testTag("web-browser")) {
+    LaunchedEffect(web, model.route, model.foreground, model.webReading?.id) {
+        val view = web
+        val session = model.webReading
+        if (view != null && session != null && model.route == "webread" && model.foreground) {
+            while (model.route == "webread" && model.foreground && web === view && !dead) {
+                if (view.url?.substringBefore('#') != session.chapter.url) {
+                    model.webLoadingMessage("The website changed. Return to Website to continue.")
+                    break
+                }
+                val anchor = session.images.getOrNull(model.webVisible.firstOrNull() ?: model.webPosition.first)
+                val nearEnd = (model.webVisible.maxOrNull() ?: model.webPosition.first) >= session.images.size - 3
+                view.evaluateForReader(LiveChapter.advanceScript(anchor?.url, model.webFraction, nearEnd))
+                // Give scroll listeners and IntersectionObserver a frame before discovery.
+                delay(350)
+                val raw = view.evaluateForReader(WebImageDiscovery.script)
+                runCatching { WebImageDiscovery.parse(raw, session.chapter.url) }.onSuccess { source ->
+                    val cookies = source.images.filter { it.likelyPage }.associate { it.url to CookieManager.getInstance().getCookie(it.url).orEmpty() }
+                    model.acceptWebDiscovery(session.id, source, cookies)
+                }.onFailure { model.webLoadingMessage("Waiting for the website. Use Website if the next image needs a tap.") }
+                delay(if (nearEnd) 850 else 1800)
+            }
+        }
+    }
+    BackHandler(model.route == "web" && canGoBack && !model.busy) { web?.goBack() }
+    BackHandler(model.route == "web" && model.webAddressExpanded && !model.busy) { model.webAddressExpanded = false }
+    Column(Modifier.fillMaxSize().imePadding().then(if (model.route == "web") Modifier.testTag("web-browser") else Modifier.alpha(0f).clearAndSetSemantics {})) {
         // Keep native web content clipped below an opaque, independently drawn toolbar.
-        if (model.webAddressExpanded) Surface(Modifier.fillMaxWidth().zIndex(1f), color = MaterialTheme.colorScheme.surface) {
+        if (model.webAddressExpanded && model.route == "web") Surface(Modifier.fillMaxWidth().zIndex(1f), color = MaterialTheme.colorScheme.surface) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
                 OutlinedTextField(address, { address = it }, singleLine = true,
                     placeholder = { Text("Paste a chapter link") }, label = { Text("Website address") },
@@ -128,6 +156,10 @@ internal fun WebBrowserScreen(model: RuyoModel) {
                         CookieManager.getInstance().setAcceptThirdPartyCookies(this, false)
                         webViewClient = object : WebViewClient() {
                             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+                                if (model.route != "web" && request.isForMainFrame) {
+                                    model.webLoadingMessage("The website requested navigation. Open Website to continue.")
+                                    return true
+                                }
                                 val allowed = runCatching { WebAddress.normalize(request.url.toString()) }.isSuccess
                                 if (!allowed && request.isForMainFrame) failure = "This link cannot be opened here. Use an HTTPS chapter link."
                                 return !allowed
@@ -184,7 +216,7 @@ internal fun WebBrowserScreen(model: RuyoModel) {
             }
         }
     }
-    candidates?.let { source ->
+    candidates?.takeIf { model.route == "web" }?.let { source ->
         WebImagesSheet(source, dismiss = { candidates = null }) { selected ->
             val cookies = selected.associateWith { CookieManager.getInstance().getCookie(it).orEmpty() }
             val agent = web?.settings?.userAgentString.orEmpty()
@@ -234,4 +266,9 @@ internal fun WebImagesSheet(source: WebChapter, dismiss: () -> Unit, import: (Se
             Button(onClick = { import(selected) }, enabled = selected.isNotEmpty(), modifier = Modifier.fillMaxWidth().padding(20.dp).height(48.dp).testTag("download-web-images")) { Text("Download ${selected.size} images") }
         }
     }
+}
+
+
+private suspend fun WebView.evaluateForReader(script: String): String = suspendCancellableCoroutine { continuation ->
+    evaluateJavascript(script) { value -> if (continuation.isActive) continuation.resume(value ?: "null") }
 }
