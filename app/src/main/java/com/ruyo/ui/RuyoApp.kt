@@ -329,7 +329,7 @@ private fun SettingsScreen(model: RuyoModel) {
             SectionLabel("About")
             SettingLine("Ruyo", "0.4.1 preview")
             Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("This build includes joined bubble areas, on-device text recognition, provider-based translation, and fitted previews. Website reading mode supports editing and translation as you scroll. Generated lessons are still in development.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Read local chapters or websites with translation as you scroll. Tap translated dialogue for grammar, vocabulary, examples, and practice. Use Edit in the lesson sheet to adjust its text and lettering.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

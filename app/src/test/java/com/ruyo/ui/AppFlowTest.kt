@@ -404,6 +404,7 @@ class AppFlowTest {
         assertEquals(4, calls)
         compose.onNodeWithTag("web-reading-scroll").performScrollToIndex(0)
         awaitState { model.webPosition.first == 0 }
+        awaitTag("web-page-0")
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
         awaitTag("study-sheet")
         awaitState { model.explanation != null && !model.explanationBusy }
