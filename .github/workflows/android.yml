@@ -112,7 +112,6 @@ jobs:
 
   device:
     name: Android 12 OCR and Keystore checks
-    needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -146,7 +145,7 @@ jobs:
           disk-size: 2048M
           emulator-boot-timeout: 180
           emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: ./gradlew --no-daemon :app:connectedDebugAndroidTest
+          script: bash scripts/test-device.sh
       - name: Summarize device checks
         if: always()
         run: |
@@ -165,5 +164,6 @@ jobs:
           path: |
             app/build/reports/androidTests/
             app/build/outputs/androidTest-results/
+            app/build/translation-diagnostics/
           if-no-files-found: ignore
           retention-days: 7
