@@ -6,12 +6,20 @@ import com.ruyo.ai.OcrLine
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
-/** A small, persisted bilinear surface. Coordinates stay on the source page when areas split. */
-data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val height: Int, val corners: List<Int>) {
-    init { require(left >= 0 && top >= 0 && width in 2..16_384 && height in 2..16_384 && corners.size == 4) }
+/** A persisted bilinear or row-sampled surface. Coordinates stay on the page when areas split. */
+data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val height: Int, val corners: List<Int>, val rows: List<Int> = emptyList()) {
+    init {
+        require(left >= 0 && top >= 0 && width in 2..16_384 && height in 2..16_384 && corners.size == 4)
+        require(rows.isEmpty() || rows.size == height * 2)
+    }
     fun colorAt(x: Int, y: Int): Int {
         val xx = ((x - left).toDouble() / (width - 1)).coerceIn(0.0, 1.0)
         val yy = ((y - top).toDouble() / (height - 1)).coerceIn(0.0, 1.0)
+        if (rows.isNotEmpty()) {
+            val row = (y - top).coerceIn(0, height - 1) * 2
+            fun channel(get: (Int) -> Int) = (get(rows[row]) * (1 - xx) + get(rows[row + 1]) * xx).roundToInt().coerceIn(0, 255)
+            return Color.rgb(channel(Color::red), channel(Color::green), channel(Color::blue))
+        }
         fun channel(get: (Int) -> Int): Int = ((get(corners[0]) * (1 - xx) + get(corners[1]) * xx) * (1 - yy) +
             (get(corners[2]) * (1 - xx) + get(corners[3]) * xx) * yy).roundToInt().coerceIn(0, 255)
         return Color.rgb(channel(Color::red), channel(Color::green), channel(Color::blue))
@@ -46,7 +54,7 @@ object TextRegionRepair {
         selectFlat(source, lines, allLines) ?: selectShaded(source, lines, allLines)
 
     /** Uniform, high-contrast lettering over artwork. Ambiguous components need a manual mask. */
-    fun selectArtwork(source: Bitmap, lines: List<OcrLine>): BubbleRegion? {
+    fun selectArtwork(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines): BubbleRegion? {
         if (lines.isEmpty() || lines.size > 8) return null
         val size = lines.map { it.bottom - it.top }.sorted()[lines.size / 2]
         if (size < 12) return null
@@ -55,6 +63,7 @@ object TextRegionRepair {
         val right = lines.maxOf { it.right } + pad; val bottom = lines.maxOf { it.bottom } + pad
         val w = right - left; val h = bottom - top
         if (left < 0 || top < 0 || right > source.width || bottom > source.height || w.toLong() * h > 400_000 || w < 16 || h < 16) return null
+        if (allLines.any { it !in lines && it.left < right && it.right > left && it.top < bottom && it.bottom > top }) return null
         val pixels = IntArray(w * h); source.getPixels(pixels, 0, w, left, top, w, h)
         val gray = IntArray(pixels.size) { luminance(pixels[it]).roundToInt() }
         val radius = (size / 3).coerceIn(4, 16)
@@ -100,7 +109,7 @@ object TextRegionRepair {
                 if (x in 2 until w - 2 && y in 2 until h - 2) mask[y * w + x] = true
             }
         }
-        if (components < 2 || kept < textArea / 80 || mask.count { it } > textArea * .65) return null
+        if (components < 2 || kept < textArea / 80 || kept > textArea * .60 || mask.count { it } > pixels.size * .60) return null
         return BubbleRegion(left, top, PixelMask(w, h, BooleanArray(w * h) { true }), mask, pixels.first(),
             textColor = if (luminance(target) > 160) Color.WHITE else Color.BLACK, inpaint = true)
     }
@@ -223,6 +232,8 @@ object TextRegionRepair {
         for (i in pixels.indices) {
             if (Color.alpha(pixels[i]) < 250) return null
             val x = i % w; val y = i / w; val bg = background(x, y); val delta = distance(pixels[i], bg)
+            // A strong stroke entering from outside the padded text area belongs to artwork or a border.
+            if (delta > 32 && (x < 2 || y < 2 || x >= w - 2 || y >= h - 2)) return null
             if (inText(left + x, top + y)) {
                 textCount++; raw[i] = delta > 14
                 if (delta > 45) { if (luminance(pixels[i]) > luminance(bg)) lighter += delta * delta else darker += delta * delta }
@@ -236,8 +247,10 @@ object TextRegionRepair {
             if (x in 2 until w - 2 && y in 2 until h - 2) ink[y * w + x] = true
         }
         if (ink.count { it } > pixels.size * .60) return null
-        return BubbleRegion(left, top, PixelMask(w, h, BooleanArray(w * h) { true }), ink, background(w / 2, h / 2),
-            textColor = if (lighter > darker) Color.WHITE else Color.BLACK, inpaint = true)
+        val surface = BackgroundSurface(left, top, w, h,
+            listOf(rows.first().first, rows.first().second, rows.last().first, rows.last().second), rows.flatMap { listOf(it.first, it.second) })
+        return BubbleRegion(left, top, PixelMask(w, h, BooleanArray(w * h) { true }), ink, background(w / 2, h / 2), surface,
+            textColor = if (lighter > darker) Color.WHITE else Color.BLACK)
     }
 
     private data class Sample(val x: Double, val y: Double, val color: Int)

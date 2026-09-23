@@ -93,8 +93,8 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 
 **Automatic translation combines bubble selection, shaded-caption repair and a reviewable artwork fallback.**
 The source-script OCR model must match the comic. Joined balloon parts retain
-independent layout areas. Smooth captions use sampled background colors; text on
-shading transitions or high-contrast artwork uses boundary-inward local repair.
+independent layout areas. Smooth captions and shading transitions use sampled background colors per row;
+high-contrast artwork uses boundary-inward local repair.
 Ambiguous or missing OCR and impossible fits still preserve the original. Artwork
 repairs are marked for review. This is a bounded local pixel method, not neural
 reconstruction: large letters over faces, edges or detailed objects can leave artifacts.

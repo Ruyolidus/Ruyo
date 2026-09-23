@@ -36,6 +36,7 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
     var tool by remember(draft.edit.id) { mutableStateOf("Erase text") }
     var radius by remember(draft.edit.id) { mutableFloatStateOf(8f) }
     var showingPreview by remember(draft.edit.id) { mutableStateOf(false) }
+    var cleanupOptions by remember(draft.edit.id) { mutableStateOf(false) }
     var padding by remember(draft.edit.id, draft.edit.margin) { mutableFloatStateOf(draft.edit.margin.toFloat()) }
     var fontScale by remember(draft.edit.id, draft.edit.fontScale) { mutableFloatStateOf(draft.edit.fontScale) }
     val preferredSize = BubbleEditRenderer.preferredSize(model.opened?.original?.width ?: draft.crop.width, draft.edit)
@@ -74,18 +75,21 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
         item { AiEditorControls(model, draft) }
         item {
             Column(Modifier.padding(horizontal = 20.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Repair shading and texture", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = draft.edit.region.inpaint, onCheckedChange = model::changeCleanup, enabled = !working, modifier = Modifier.testTag("texture-repair"))
-                }
-                if (draft.edit.region.inpaint) Text("Repairs only the red mask using nearby pixels. Check detailed artwork in the preview.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(onClick = model::growCleanup, enabled = !working) { Text("Include outline") }
                     TextButton(onClick = model::rebuildCleanup, enabled = !working) { Text("Rebuild cleanup") }
+                    TextButton(onClick = { cleanupOptions = !cleanupOptions }, modifier = Modifier.testTag("cleanup-options")) { Text(if (cleanupOptions) "Less" else "Cleanup options") }
                 }
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Light lettering", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = draft.edit.region.textColor == android.graphics.Color.WHITE, onCheckedChange = model::changeTextColor, enabled = !working)
+                if (cleanupOptions) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Repair shading and texture", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = draft.edit.region.inpaint, onCheckedChange = model::changeCleanup, enabled = !working, modifier = Modifier.testTag("texture-repair"))
+                    }
+                    if (draft.edit.region.inpaint) Text("Repairs only the red mask using nearby pixels. Check detailed artwork in the preview.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = model::growCleanup, enabled = !working) { Text("Include outline") }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Light lettering", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                        Switch(checked = draft.edit.region.textColor == android.graphics.Color.WHITE, onCheckedChange = model::changeTextColor, enabled = !working)
+                    }
                 }
             }
         }

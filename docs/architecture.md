@@ -275,7 +275,7 @@ also retries contrast when the raw result is empty. No image goes to a provider.
 
 `TextRegionRepair` first validates a smooth RGB plane. Its shaded fallback samples
 background strips per row and isolates contrast within OCR halos, including source
-outlines. A separate artwork fallback selects a dominant high-contrast lettering
+outlines. Persisted row samples preserve hard shading transitions without ripples. A separate artwork fallback selects a dominant high-contrast lettering
 color, validates connected components, and marks accepted repairs for review.
 `LocalInpainter` fills a mask from its boundary inward using nearby known pixels and
 bounded gradient extrapolation. Unmasked pixels are unchanged. This is a local

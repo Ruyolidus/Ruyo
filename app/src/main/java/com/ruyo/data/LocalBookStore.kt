@@ -263,7 +263,10 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             require(w > 0 && h > 0 && w.toLong() * h <= 900_000)
             val surface = obj.optJSONObject("surface")?.let { s ->
                 val corners = s.getJSONArray("corners"); require(corners.length() == 4)
-                com.ruyo.reader.BackgroundSurface(s.getInt("left"), s.getInt("top"), s.getInt("width"), s.getInt("height"), (0..3).map { corners.getInt(it) })
+                val rows = s.optJSONArray("rows")
+                require(rows == null || rows.length() <= 32_768)
+                com.ruyo.reader.BackgroundSurface(s.getInt("left"), s.getInt("top"), s.getInt("width"), s.getInt("height"), (0..3).map { corners.getInt(it) },
+                    if (rows == null) emptyList() else (0 until rows.length()).map { rows.getInt(it) })
             }
             val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"),
                 surface, obj.optInt("textColor", Color.rgb(39, 42, 53)), obj.optBoolean("inpaint"))
@@ -280,7 +283,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             .put("sourceLetterHeight", edit.sourceLetterHeight?.toDouble()).put("matchSourceSize", edit.matchSourceSize)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
             .put("inpaint", edit.region.inpaint).put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
-                .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)) })
+                .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)).put("rows", JSONArray(s.rows)) })
             .put("color", edit.region.backgroundColor).put("interior", pack(edit.region.interior.copyPixels())).put("erase", pack(edit.region.eraseMask))) }
     }.toString())
 

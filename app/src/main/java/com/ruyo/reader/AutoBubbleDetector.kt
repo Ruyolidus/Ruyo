@@ -56,7 +56,7 @@ object AutoBubbleDetector {
             currentCoroutineContext().ensureActive()
             if (accepted.size >= 40) break
             val smooth = TextRegionRepair.select(source, block, valid)
-            val region = smooth ?: TextRegionRepair.selectArtwork(source, block) ?: continue
+            val region = smooth ?: TextRegionRepair.selectArtwork(source, block, valid) ?: continue
             if (valid.any { it !in block && region.contains(it.x, it.y) }) continue
             if (accepted.any { it.overlaps(region) }) continue
             val text = block.joinToString("\n") { it.text }

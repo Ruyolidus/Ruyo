@@ -38,15 +38,22 @@ class ShadedTextRepairTest {
         }
         paint.style = Paint.Style.STROKE; paint.strokeWidth = 3f; canvas.drawRect(40f, 55f, 490f, 265f, paint)
         val selected = requireNotNull(TextRegionRepair.select(source, lines))
-        assertTrue(selected.inpaint)
+        assertTrue(selected.backgroundSurface!!.rows.isNotEmpty())
         val edit = BubbleEdit(region = selected, japanese = "準備はいい？もう行けるよ。", margin = 4)
         val preview = BubbleEditRenderer.preview(source, edit).getOrThrow()
         assertEquals(0, selected.interior.inset(4).outsideInkCount(preview.fit.ink))
-        var unmaskedDark = 0
-        for (line in lines) for (y in line.top until line.bottom) for (x in line.left until line.right) {
-            if (Color.red(source.getPixel(x, y)) < 100 && !selected.eraseMask[(y - selected.top) * selected.width + x - selected.left]) unmaskedDark++
+        var unmaskedLettering = 0
+        for (y in selected.top until selected.top + selected.height) for (x in selected.left until selected.left + selected.width) {
+            val expected = if (y < 169) Color.WHITE else Color.rgb(232, 237, 244)
+            val actual = source.getPixel(x, y)
+            val difference = maxOf(abs(Color.red(expected) - Color.red(actual)), abs(Color.green(expected) - Color.green(actual)), abs(Color.blue(expected) - Color.blue(actual)))
+            if (difference > 6 && !selected.eraseMask[(y - selected.top) * selected.width + x - selected.left]) unmaskedLettering++
         }
-        assertEquals("No original dark lettering should remain", 0, unmaskedDark)
+        assertEquals("Neither original dark lettering nor its pale outline should remain", 0, unmaskedLettering)
+        for (y in 0 until selected.height) for (x in 0 until selected.width) if (selected.eraseMask[y * selected.width + x] && Color.alpha(preview.fit.ink.getPixel(x, y)) == 0) {
+            val expected = if (selected.top + y < 169) Color.WHITE else Color.rgb(232, 237, 244)
+            assertEquals("The background transition must remain straight after removing an outline", expected, preview.crop.getPixel(x, y))
+        }
         val output = BubbleEditRenderer.composite(source, listOf(edit))
         for (y in 0 until source.height) for (x in 0 until source.width) if (!selected.contains(x, y)) assertEquals(source.getPixel(x, y), output.getPixel(x, y))
         write(source, "shaded-outline-original"); write(output, "shaded-outline-translated")
@@ -55,7 +62,7 @@ class ShadedTextRepairTest {
             val store = LocalBookStore(RuntimeEnvironment.getApplication(), root, File(root, "stage"))
             val book = store.addBitmap("Shaded fixture", source); store.saveEdit(book.id, source, edit)
             val reopened = store.open(book)
-            assertTrue(reopened.edits.single().region.inpaint); assertTrue(output.sameAs(reopened.displayed))
+            assertEquals(selected.backgroundSurface, reopened.edits.single().region.backgroundSurface); assertTrue(output.sameAs(reopened.displayed))
             store.removeEdit(book.id, edit.id); assertTrue(source.sameAs(store.open(book).displayed))
         } finally { root.deleteRecursively() }
     }
@@ -65,7 +72,7 @@ class ShadedTextRepairTest {
             val wave = (sin(i % w / 19.0) * 7 + sin(i / w / 17.0) * 6).toInt()
             Color.rgb(80 + wave, 140 + wave, 185 + wave)
         }
-        val source = Bitmap.createBitmap(background, w, h, Bitmap.Config.ARGB_8888)
+        val source = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).apply { setPixels(background, 0, w, 0, 0, w, h) }
         val glyphs = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.BLACK; textSize = 30f }
         Canvas(glyphs).drawText("Ready?", 75f, 83f, paint); Canvas(source).drawBitmap(glyphs, 0f, 0f, null)
@@ -82,5 +89,7 @@ class ShadedTextRepairTest {
         val line = OcrLine("Ready?", 75, 58, 180, 86)
         val detected = TextRegionRepair.selectArtwork(source, listOf(line))
         assertNotNull("High-contrast text over gentle texture should be selectable", detected)
+        val neighbor = OcrLine("Separate", 78, 87, 188, 109)
+        assertNull(TextRegionRepair.selectArtwork(source, listOf(line), listOf(line, neighbor)))
     }
 }

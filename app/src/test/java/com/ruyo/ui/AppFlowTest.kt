@@ -277,6 +277,7 @@ class AppFlowTest {
         awaitState { !model.busy }
         assertTrue(model.draft!!.edit.region.inpaint)
         assertFalse(model.draft!!.edit.region.eraseMask.any { it })
+        compose.onNodeWithTag("bubble-editor").performScrollToNode(hasTestTag("japanese-input"))
         compose.onNodeWithTag("japanese-input").performScrollTo().performTextInput("よし")
         compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
         awaitState { model.draft?.previewError != null && !model.busy }
@@ -393,8 +394,8 @@ class AppFlowTest {
                 com.ruyo.web.WebReadingSession(app, chapter, cookies, agent) { _, check -> check(); java.io.ByteArrayInputStream(encoded) }
             }, explanationService = ExplanationService { _, text, language ->
                 assertEquals("待って！", text); assertEquals("ja", language); lessons++
-                AiLesson("Wait! A casual request.", "matte", listOf(LessonPoint("待って", "The te-form makes a casual request.")),
-                    listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonExample("少し待って。", "すこしまって。", "Sukoshi matte.", "Wait a little. The te-form asks someone to wait.", listOf(LessonWord("少し", "すこし", "a little", "N5"), LessonWord("待って", "まって", "wait, as a casual request", "N5")))),
+                AiLesson("Hang on!", "matte", listOf(LessonPoint("待って", "The te-form makes a casual request.")),
+                    listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonExample("少し待って。", "すこしまって。", "Sukoshi matte.", "Wait a little. Handy when your friend is about to walk off.", listOf(LessonWord("少し", "すこし", "a little", "N5"), LessonWord("待って", "まって", "wait, as a casual request", "N5")))),
                     listOf(LessonExercise("Your friend is walking off while you tie your shoe. What fits?", "待って！", "Exactly: you're asking them to wait a moment.", "待って (まって / matte): wait. ありがとう (arigatou): thanks. おはよう (ohayou): good morning.", "まって / matte", listOf("ありがとう！", "待って！", "おはよう！"))),
                     note = "Someone's saying 'hang on!' The little て ending turns wait into something you can ask a friend to do.")
             })
@@ -473,8 +474,9 @@ class AppFlowTest {
         compose.onNodeWithText("ありがとう！").performClick()
         compose.onNodeWithTag("practice-feedback").assertTextContains("Not quite. Try another, or open the hint.")
         compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("待って！"))
-        compose.onNode(hasText("待って！") and hasAnyAncestor(hasTestTag("lesson-content"))).performClick()
+        compose.onNode(hasText("待って！") and hasClickAction() and hasAnyAncestor(hasTestTag("lesson-content"))).performClick()
         compose.onNodeWithTag("practice-feedback").assertTextContains("That fits.")
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("practice-feedback"))
         capture("ai-lesson-quick-question", "study-sheet")
         compose.onNodeWithContentDescription("Close lesson").performClick()
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }

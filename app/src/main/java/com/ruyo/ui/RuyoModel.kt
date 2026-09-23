@@ -475,7 +475,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                     TextRegionRepair.groups(lines).firstOrNull { group -> group.any { line ->
                         val halo = maxOf(4, (line.bottom - line.top) / 3)
                         x in (line.left - halo)..(line.right + halo) && y in (line.top - halo)..(line.bottom + halo)
-                    } }?.let { TextRegionRepair.select(book.original, it, lines) ?: TextRegionRepair.selectArtwork(book.original, it) }
+                    } }?.let { TextRegionRepair.select(book.original, it, lines) ?: TextRegionRepair.selectArtwork(book.original, it, lines) }
                 }
                 if (fallback == null || book.edits.any { it.region.overlaps(fallback) }) {
                     selectionError = "Automatic selection could not isolate this text. Choose Draw area, hold and drag around the lettering, then brush the letters to repair them."

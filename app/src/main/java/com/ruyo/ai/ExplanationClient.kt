@@ -43,7 +43,7 @@ class ExplanationClient(private val client: TranslationClient = TranslationClien
                 "\"grammar\":[{\"text\":\"construction from dialogue\",\"explanation\":\"how it works here\"}], " +
                 "\"vocabulary\":[{\"word\":\"word\",\"reading\":\"reading\",\"meaning\":\"meaning here\",\"level\":\"\"}], " +
                 "\"examples\":[{\"text\":\"short new example\",\"reading\":\"full reading with no kanji\",\"pronunciation\":\"romanization\", " +
-                "\"explanation\":\"English meaning and how it uses the grammar\",\"words\":[{\"word\":\"exact sentence chunk\",\"reading\":\"readable pronunciation\",\"meaning\":\"English meaning or particle role\",\"level\":\"\"}]}], " +
+                "\"explanation\":\"English meaning and when you could say it\",\"words\":[{\"word\":\"exact sentence chunk\",\"reading\":\"readable pronunciation\",\"meaning\":\"English meaning or particle role\",\"level\":\"\"}]}], " +
                 "\"exercises\":[{\"question\":\"short practice question\",\"hint\":\"readings and meanings of every target-language word in the question\", " +
                 "\"choices\":[\"option A\",\"option B\",\"option C\"],\"answer\":\"exact correct option\",\"answerReading\":\"answer pronunciation\",\"explanation\":\"brief helpful feedback and English meaning\"}]}. " +
                 "Include 1–3 useful grammar points, 1–8 words, exactly one short example and exactly one quick multiple-choice challenge. " +
