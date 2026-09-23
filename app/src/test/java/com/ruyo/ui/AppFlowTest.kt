@@ -282,8 +282,10 @@ class AppFlowTest {
         compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
         awaitState { model.draft?.previewError != null && !model.busy }
         compose.onNodeWithTag("save-edit").assertIsNotEnabled()
-        compose.onNodeWithTag("editor-canvas").performScrollTo().performTouchInput { click(center) }
+        compose.onNodeWithTag("bubble-editor").performScrollToNode(hasTestTag("editor-canvas"))
+        compose.onNodeWithTag("editor-canvas").performTouchInput { click(center) }
         assertTrue(model.draft!!.edit.region.eraseMask.any { it })
+        compose.onNodeWithTag("bubble-editor").performScrollToNode(hasTestTag("preview-edit"))
         compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
         awaitState { model.draft?.preview != null && !model.busy }
         capture("manual-artwork-preview")
@@ -473,7 +475,7 @@ class AppFlowTest {
         compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("ありがとう！"))
         compose.onNodeWithText("ありがとう！").performClick()
         compose.onNodeWithTag("practice-feedback").assertTextContains("Not quite. Try another, or open the hint.")
-        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("待って！"))
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("待って！") and hasClickAction())
         compose.onNode(hasText("待って！") and hasClickAction() and hasAnyAncestor(hasTestTag("lesson-content"))).performClick()
         compose.onNodeWithTag("practice-feedback").assertTextContains("That fits.")
         compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("practice-feedback"))
