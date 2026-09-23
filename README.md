@@ -3,7 +3,7 @@
 An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.5.1
+## Preview 0.6.0
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
@@ -64,9 +64,13 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
 - Tap an enclosed, light, flat bubble to select it; review and brush-correct its
   lettering mask, enter a translation, adjust its style and padding, preview, and save the replacement.
 - Small bubbles can be selected, including a tap that lands on lettering when a nearby blank seed belongs to the same interior. Rejections remain visible while selecting.
-- OCR-guided cleanup also handles text on flat colored panels, dark bars, and gentle
-  gradients. It samples the background around the lettering and changes only the
-  glyph mask. Detailed artwork, ambiguous regions, and unreadable text stay original.
+- OCR-guided cleanup handles flat colored panels, dark bars, shading transitions,
+  and outlined lettering. Overlapping, original-scale tiles of the working image
+  run raw and adaptive-contrast OCR passes; duplicate lines are merged locally.
+- High-contrast text over artwork can use a reviewable glyph mask and local pixel
+  reconstruction. The editor also has **Draw area**, erase/restore brushes,
+  **Repair shading and texture**, **Include outline**, and **Rebuild cleanup**.
+  Only the lettering mask is repaired; no opaque rectangular cover is painted.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
   edited bubble to revise it or restore its original state.
 - Lettering starts at normal dialogue size or an estimated source size and automatically reflows/shrinks as needed.
@@ -74,10 +78,10 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   the preview. Short dialogue is no longer enlarged to fill an empty bubble.
 - Every successful replacement preview scrolls into view. Fit failures stay visible
   in the editor, Save is disabled for unvalidated text, and repeated edits are tested.
-- Tap a translated bubble in the chapter reader for an automatic AI lesson: meaning,
-  grammar, vocabulary, original examples, and exercises with revealable answers.
-  Each example includes its reading, romanization, meaning, and an ordered explanation
-  of every word/particle. Japanese readings contain no kanji. Exercise hints include
+- Tap a translated bubble for a short meaning and conversational explanation,
+  one everyday example, and a quick choice question with feedback and an optional
+  hint. Grammar and vocabulary remain in their own tabs. **Reading & words**
+  expands the example's reading, romanization and complete word/particle help. Japanese readings contain no kanji. Exercise hints include
   reading help; incomplete example breakdowns are rejected. Old lessons refresh once.
   Japanese vocabulary can include approximate JLPT estimates. Explanations are in
   English, use the active provider, and send only the tapped dialogue text.
@@ -87,14 +91,14 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   the same reading position. Sample lessons remain built-in; saved sentences can
   also open generated lessons.
 
-**Automatic translation supports enclosed light bubbles and OCR-located text on smooth backgrounds.**
-The source-script OCR model must match the comic. Detection uses OCR line positions
-and the conservative bubble selector, including independent parts of joined balloons.
-When that path fails, a bounded text area can use flat/linear background reconstruction.
-It requires a clear surrounding background and letter-sized ink components. It cannot
-inpaint arbitrary artwork or recover lettering missed by OCR.
-A line crossing a region boundary or an incomplete OCR footprint is left for manual
-editing. Fitting failures keep the original pixels; text is never silently shortened.
+**Automatic translation combines bubble selection, shaded-caption repair and a reviewable artwork fallback.**
+The source-script OCR model must match the comic. Joined balloon parts retain
+independent layout areas. Smooth captions use sampled background colors; text on
+shading transitions or high-contrast artwork uses boundary-inward local repair.
+Ambiguous or missing OCR and impossible fits still preserve the original. Artwork
+repairs are marked for review. This is a bounded local pixel method, not neural
+reconstruction: large letters over faces, edges or detailed objects can leave artifacts.
+Use Draw area and the mask brushes when automatic selection cannot isolate text.
 
 The browser collects HTTPS image URLs as you browse, filters common comment/profile
 images, and retains previously seen chapter images. Extract them into an imported
@@ -105,9 +109,9 @@ adapters. This does not promise support for every scan site.
 Recognition uses the bounded working image (up to 6 MP), so tiny original lettering
 can still need correction. Latin, Japanese, Chinese, Korean, and Devanagari OCR are
 bundled; other source scripts can be typed manually. Target language is configurable,
-with Japanese as default. Complex textured/curved-gradient repair, text over artwork,
-original-resolution tiling and custom font import remain
-future work. No opaque rectangular covers are used as a fallback.
+with Japanese as default. OCR tiles preserve the working image's resolution, not
+that of archived originals. Original-resolution decoding, advanced reconstruction
+of detailed artwork and custom font import remain future work.
 
 New imports retain original image bytes in private storage plus bounded working
 copies (up to 6 megapixels / 8192 pixels per dimension). Large working copies are
@@ -221,7 +225,7 @@ app's interaction and performance on an actual phone.
 
 | Package | Responsibility |
 | --- | --- |
-| `reader` | Pixel masks, horizontal fitting, and flat-bubble repair |
+| `reader` | Pixel masks, horizontal fitting, shaded cleanup, and local inpainting |
 | `sample` | Original sample artwork and explicit prewritten learning data |
 | `importer` | Multiple-document decoding and natural filename sorting |
 | `web` | HTTPS URL policy, DOM image discovery, bounded downloads and temporary sessions |
@@ -257,12 +261,15 @@ Completed pages and swaps persist on disk; errors and pauses leave the chapter
 readable and allow resumption. Preparation describes processed pages, not a
 promise that every visible word has been recognized. Review flags identify
 recognized lettering outside supported areas. Existing saved edits are kept,
-including edits in another target language. Text over artwork, complex gradients,
-and widely open/clipped bubble outlines still require a different repair method.
+including edits in another target language. The artwork fallback is flagged for
+review; unresolved regions remain available for manual area selection and masks.
 Narrow outline leaks now use a conservative inset selection fallback; page-edge
 backgrounds are still rejected. Source and border pixels remain unchanged.
 
-In 0.5.1, chapter preparation rechecks skipped regions with the new cleanup method.
+In 0.6.0, chapter preparation rechecks skipped regions with the new cleanup method.
 Existing edits remain intact. **Retry skipped text** retries review pages without
-retranslating their saved regions. For a manual attempt, tap the lettering in Edit
-mode and check the **Original text** script setting if recognition fails.
+retranslating their saved regions. For an existing translation with leftover outlines,
+open **Edit → Rebuild cleanup**, or use **Include outline** and preview again.
+For unselected text, choose **Edit bubbles → Draw area**, hold and drag around the
+text, then brush its letters or rebuild its cleanup. A newly drawn empty mask cannot
+be saved as a translation. Check **Original text** if the OCR script is wrong.

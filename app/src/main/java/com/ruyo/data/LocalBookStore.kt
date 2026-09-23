@@ -266,7 +266,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
                 com.ruyo.reader.BackgroundSurface(s.getInt("left"), s.getInt("top"), s.getInt("width"), s.getInt("height"), (0..3).map { corners.getInt(it) })
             }
             val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"),
-                surface, obj.optInt("textColor", Color.rgb(39, 42, 53)))
+                surface, obj.optInt("textColor", Color.rgb(39, 42, 53)), obj.optBoolean("inpaint"))
             BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat(),
                 languageTag = obj.optString("language", "ja"), fontFamily = obj.optString("fontFamily", "sans-serif"),
                 bold = obj.optBoolean("bold"), italic = obj.optBoolean("italic"),
@@ -279,7 +279,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             .put("language", edit.languageTag).put("fontFamily", edit.fontFamily).put("bold", edit.bold).put("italic", edit.italic)
             .put("sourceLetterHeight", edit.sourceLetterHeight?.toDouble()).put("matchSourceSize", edit.matchSourceSize)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
-            .put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
+            .put("inpaint", edit.region.inpaint).put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
                 .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)) })
             .put("color", edit.region.backgroundColor).put("interior", pack(edit.region.interior.copyPixels())).put("erase", pack(edit.region.eraseMask))) }
     }.toString())

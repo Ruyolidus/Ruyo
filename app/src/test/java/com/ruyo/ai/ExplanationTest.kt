@@ -56,11 +56,22 @@ class ExplanationTest {
             assertTrue(runCatching { ExplanationClient.decode(body) }.isFailure)
         }
     }
+    @Test fun quickChoicesRoundTripAndRejectAnAmbiguousAnswer() {
+        val value = lesson().copy(note = "It's a quick 'hang on!' you can say to a friend.", exercises = listOf(
+            LessonExercise("Your friend walks away. Ask them to wait.", "待って", "It means wait.", "待って (matte): wait; ありがとう (arigatou): thanks; おはよう (ohayou): morning.", "まって", listOf("待って", "ありがとう", "おはよう"))))
+        assertEquals(value, ExplanationClient.decode(ExplanationClient.encode(value)))
+        val wrong = ExplanationClient.encode(value)
+        wrong.getJSONArray("exercises").getJSONObject(0).put("answer", "not an option")
+        assertTrue(runCatching { ExplanationClient.decode(wrong) }.isFailure)
+        val duplicate = ExplanationClient.encode(value)
+        duplicate.getJSONArray("exercises").getJSONObject(0).getJSONArray("choices").put(1, "待って")
+        assertTrue(runCatching { ExplanationClient.decode(duplicate) }.isFailure)
+    }
     @Test fun oldCachedLessonsCannotHideTheNewExampleReadings() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val cache = LessonCache(context); val key = cache.key("待って！", "ja", profile())
-        java.io.File(context.cacheDir, "lessons-v2/$key.json").delete()
-        val old = java.io.File(context.cacheDir, "lessons-v1/$key.json")
+        java.io.File(context.cacheDir, "lessons-v3/$key.json").delete()
+        val old = java.io.File(context.cacheDir, "lessons-v2/$key.json")
         old.parentFile!!.mkdirs(); old.writeText(ExplanationClient.encode(lesson()).toString())
         assertNull(cache.read(key))
         old.delete()

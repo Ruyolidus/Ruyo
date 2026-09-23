@@ -2,6 +2,7 @@ package com.ruyo.ai
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.Rect
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
@@ -13,6 +14,8 @@ import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
 import com.ruyo.reader.BubbleRegion
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import java.util.concurrent.Executor
 
 enum class OcrScript(val label: String) {
@@ -31,22 +34,38 @@ fun interface OcrService {
 /** Own the input copy until ML Kit's native task finishes, including after cancellation. */
 class BubbleOcr : OcrService {
     private val gate = Mutex()
-    override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript): String =
-        process(script, { crop(source, region) }) {
+    override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript): String {
+        val original = process(script, { crop(source, region) }) { it.text.trim() }
+        if (original.isNotEmpty()) return original
+        currentCoroutineContext().ensureActive()
+        return process(script, { crop(source, region).also(OcrTiles::contrast) }) {
             it.text.trim().also { text -> require(text.isNotEmpty()) { "No readable text found. Check the source script, or type the original text below." } }
         }
+    }
 
-    override suspend fun lines(source: Bitmap, script: OcrScript): List<OcrLine> =
-        process(script, { source.copy(Bitmap.Config.ARGB_8888, false) }) { text ->
-            val lines = text.textBlocks.flatMap { it.lines }
-            require(lines.size <= 300) { "This image has too many text lines. Tap individual bubbles to edit them." }
-            lines.mapNotNull { line ->
-                line.boundingBox?.let { r ->
-                    if (line.text.isBlank() || r.width() <= 0 || r.height() <= 0) null
-                    else OcrLine(line.text.trim(), r.left, r.top, r.right, r.bottom)
+    override suspend fun lines(source: Bitmap, script: OcrScript): List<OcrLine> {
+        val found = mutableListOf<OcrLine>()
+        for (tile in OcrTiles.regions(source.width, source.height)) {
+            for (contrast in listOf(false, true)) {
+                currentCoroutineContext().ensureActive()
+                val result = process(script, {
+                    val bitmap = Bitmap.createBitmap(tile.width(), tile.height(), Bitmap.Config.ARGB_8888)
+                    android.graphics.Canvas(bitmap).drawBitmap(source, tile, Rect(0, 0, tile.width(), tile.height()), null)
+                    if (contrast) OcrTiles.contrast(bitmap)
+                    bitmap
+                }) { text ->
+                    text.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { r ->
+                        if (line.text.isBlank() || r.width() <= 0 || r.height() <= 0) null
+                        else OcrLine(line.text.trim(), (r.left + tile.left).coerceAtLeast(0), (r.top + tile.top).coerceAtLeast(0),
+                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height))
+                    } }
                 }
+                OcrTiles.merge(found, result)
+                require(found.size <= 300) { "This image has too many text lines. Tap individual text areas to edit them." }
             }
         }
+        return found.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
+    }
 
     private suspend fun <T> process(script: OcrScript, input: () -> Bitmap, result: (Text) -> T): T {
         gate.lock()
@@ -89,5 +108,53 @@ class BubbleOcr : OcrService {
             for (y in 0 until region.height) for (x in 0 until region.width) if (region.interior[x, y]) output[(y + padding) * width + x + padding] = pixels[y * region.width + x]
             return Bitmap.createBitmap(output, width, height, Bitmap.Config.ARGB_8888)
         }
+    }
+}
+
+/** Preserve working-image resolution through overlapping OCR tiles. No image leaves the device. */
+internal object OcrTiles {
+    fun regions(width: Int, height: Int): List<Rect> {
+        fun starts(length: Int, limit: Int): List<Int> {
+            if (length <= limit) return listOf(0)
+            val result = mutableListOf(0)
+            while (result.last() + limit < length) result += minOf(result.last() + limit - 192, length - limit)
+            return result
+        }
+        return starts(height, 1536).flatMap { y -> starts(width, 1280).map { x -> Rect(x, y, minOf(width, x + 1280), minOf(height, y + 1536)) } }
+    }
+    fun merge(existing: MutableList<OcrLine>, added: List<OcrLine>) {
+        for (line in added) {
+            if (line.right <= line.left || line.bottom <= line.top) continue
+            val duplicate = existing.indexOfFirst { other ->
+                val width = (minOf(line.right, other.right) - maxOf(line.left, other.left)).coerceAtLeast(0)
+                val height = (minOf(line.bottom, other.bottom) - maxOf(line.top, other.top)).coerceAtLeast(0)
+                val smaller = minOf((line.right - line.left) * (line.bottom - line.top), (other.right - other.left) * (other.bottom - other.top))
+                width * height > smaller * .60
+            }
+            if (duplicate < 0) existing += line
+            else {
+                val other = existing[duplicate]
+                // A full line from the overlap can replace a fragment at a tile boundary.
+                if (line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) existing[duplicate] = line
+            }
+        }
+    }
+    fun contrast(bitmap: Bitmap) {
+        val w = bitmap.width; val h = bitmap.height
+        val pixels = IntArray(w * h); bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        val stride = w + 1; val sum = IntArray((w + 1) * (h + 1))
+        for (y in 0 until h) {
+            var row = 0
+            for (x in 0 until w) {
+                val c = pixels[y * w + x]; val gray = (Color.red(c) * 77 + Color.green(c) * 150 + Color.blue(c) * 29) shr 8
+                pixels[y * w + x] = gray; row += gray; sum[(y + 1) * stride + x + 1] = sum[y * stride + x + 1] + row
+            }
+        }
+        for (y in 0 until h) for (x in 0 until w) {
+            val l = maxOf(0, x - 20); val r = minOf(w, x + 21); val t = maxOf(0, y - 20); val b = minOf(h, y + 21)
+            val mean = (sum[b * stride + r] - sum[t * stride + r] - sum[b * stride + l] + sum[t * stride + l]) / ((r - l) * (b - t))
+            pixels[y * w + x] = if (pixels[y * w + x] < mean - 12) Color.BLACK else Color.WHITE
+        }
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
     }
 }

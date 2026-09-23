@@ -61,6 +61,25 @@ class DeviceServicesTest {
         } finally { source.recycle() }
     }
 
+    @Test fun outlinedDialogueAtAnOcrTileBoundaryIsRecognizedOnce() = runBlocking {
+        val source = Bitmap.createBitmap(900, 2600, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(218, 223, 230)) }
+        val canvas = Canvas(source)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize = 42f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+        paint.color = Color.WHITE; paint.style = Paint.Style.STROKE; paint.strokeWidth = 6f
+        canvas.drawText("We walk across the river.", 60f, 1538f, paint)
+        paint.color = Color.BLACK; paint.style = Paint.Style.FILL
+        canvas.drawText("We walk across the river.", 60f, 1538f, paint)
+        canvas.drawText("Another page of dialogue.", 60f, 2260f, paint)
+        try {
+            val lines = withTimeout(60_000) { BubbleOcr().lines(source, OcrScript.LATIN) }
+            val boundary = lines.filter { it.text.lowercase().contains("across") }
+            assertEquals(lines.toString(), 1, boundary.size)
+            assertTrue(boundary.single().text.lowercase().contains("river"))
+            assertTrue(boundary.single().y in 1470..1560)
+            assertTrue(lines.any { it.text.lowercase().contains("another") && it.top > 2000 })
+        } finally { source.recycle() }
+    }
+
     @Test fun appStartsWithTheProductionViewModelFactory() {
         ActivityScenario.launch(MainActivity::class.java).use {
             InstrumentationRegistry.getInstrumentation().waitForIdleSync()

@@ -1,4 +1,4 @@
-# Chapter import and translation in 0.5.1
+# Chapter import and translation in 0.6.0
 
 The active browser flow collects images for import. The earlier live reading
 prototype is no longer exposed by the browser UI. It does not scroll a hidden
@@ -58,18 +58,19 @@ lazy content. Comments and other website images are filtered conservatively and
 can be reviewed explicitly.
 
 Preparation does not imply that every visible word was translated. Unsupported
-backgrounds, missing OCR, and impossible fits preserve the original. Text over
-detailed artwork and complex texture remain future work. OCR-guided cleanup can
-now handle a caption without a closed outline when its surrounding background is
-flat or gently shaded. Only lettering pixels are replaced; the rectangular layout
-area is never used as an opaque cover.
+backgrounds, missing OCR, and impossible fits preserve the original. OCR runs on
+overlapping working-image tiles with a contrast pass for outlined lettering.
+Shaded captions can use local repair, and a high-contrast artwork mask is available
+as a reviewable fallback. Complex detailed backgrounds can still leave artifacts.
+Manual Draw area and erase/restore brushes are available in the imported chapter's
+editor. Only masked pixels are repaired; the layout rectangle is never a cover.
 A bounded fallback now handles tiny outline gaps by selecting a safely inset
 interior, without painting over borders or accepting the whole page background.
 
 Original-resolution tiling, custom licensed font import, independently selected
 lesson profiles, and selectable explanation languages remain follow-up work.
 
-Lessons in 0.5.1 use structured example readings, romanization, translations and
-complete word-by-word breakdowns. The decoder checks exact word coverage and
+Lessons in 0.6.0 start with a short conversational note, one everyday example and
+a quick choice question. Reading, romanization and word help expand on request. The decoder checks exact word coverage and
 rejects kanji in reading fields. Exercise hints supply vocabulary/reading help.
 The private lesson cache uses a new version so old incomplete examples refresh.

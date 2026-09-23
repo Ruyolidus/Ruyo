@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
@@ -82,7 +83,11 @@ internal fun BookReader(model: RuyoModel) {
             next = model.neighbor(1)?.let { next -> ({ model.openBook(next) }) })
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Text("Tap inside a plain, light bubble. Pinch to reach small dialogue.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = !model.drawingArea, onClick = { model.drawingArea = false }, label = { Text("Tap text") })
+                    FilterChip(selected = model.drawingArea, onClick = { model.drawingArea = true }, label = { Text("Draw area") }, modifier = Modifier.testTag("draw-text-area"))
+                }
+                Text(if (model.drawingArea) "Hold and drag around a text block. Leave a little space around the letters." else "Tap a bubble or caption. Use Draw area for text over artwork.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                 model.selectionError?.let { Text(it, Modifier.padding(top = 8.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer) }
             }
         }
@@ -101,7 +106,8 @@ internal fun BookReader(model: RuyoModel) {
                         Text("Page ${index + 1} could not be opened", color = Color.White)
                         TextButton(onClick = { retry++ }) { Text("Retry", color = Color.White) }
                     }
-                } else ReaderPage(if (model.japanese && !model.selecting) data.displayed else data.original, "Page ${index + 1}", if (index == 0) "imported-page" else "imported-page-${page.id}") { x, y ->
+                } else ReaderPage(if (model.japanese && !model.selecting) data.displayed else data.original, "Page ${index + 1}", if (index == 0) "imported-page" else "imported-page-${page.id}",
+                    onArea = if (model.selecting && model.drawingArea && !model.busy) ({ l, t, r, b -> model.selectTextArea(l, t, r, b, data); Unit }) else null) { x, y ->
                     if (!model.busy) {
                         if (model.selecting) model.selectBubble(x, y, data)
                         else if (model.japanese) data.edits.findLast { it.region.contains(x, y) }?.let { model.studyEdit(it, data) }
@@ -132,11 +138,15 @@ internal fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, de
 }
 
 @Composable
-internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -> Unit)? = null, onTap: (Int, Int) -> Unit) {
+internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -> Unit)? = null,
+    onArea: ((Int, Int, Int, Int) -> Unit)? = null, onTap: (Int, Int) -> Unit) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val currentTap by rememberUpdatedState(onTap)
+    val currentArea by rememberUpdatedState(onArea)
+    var areaStart by remember { mutableStateOf<Offset?>(null) }
+    var areaEnd by remember { mutableStateOf<Offset?>(null) }
     val transforms = rememberTransformableState { factor, movement, _ ->
         zoom = (zoom * factor).coerceIn(1f, 4f)
         val limitX = viewport.width * (zoom - 1) / 2
@@ -146,15 +156,39 @@ internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -
     Box(Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height).clipToBounds().testTag(tag)
         .onSizeChanged { viewport = it }
         .transformable(transforms, canPan = { zoom > 1f })
-        .pointerInput(bitmap.width, bitmap.height, zoom, pan) {
+        .pointerInput(bitmap.width, bitmap.height, zoom, pan, onArea != null) {
+            if (onArea != null) {
+                detectDragGesturesAfterLongPress(
+                    onDragStart = { areaStart = it; areaEnd = it },
+                    onDragCancel = { areaStart = null; areaEnd = null },
+                    onDragEnd = {
+                        val a = areaStart; val b = areaEnd
+                        if (a != null && b != null) {
+                            val center = Offset(size.width / 2f, size.height / 2f); val scale = size.width.toFloat() / bitmap.width
+                            val first = ((a - center - pan) / zoom + center) / scale
+                            val last = ((b - center - pan) / zoom + center) / scale
+                            currentArea?.invoke(minOf(first.x, last.x).toInt(), minOf(first.y, last.y).toInt(), maxOf(first.x, last.x).toInt(), maxOf(first.y, last.y).toInt())
+                        }
+                        areaStart = null; areaEnd = null
+                    },
+                    onDrag = { change, _ -> change.consume(); areaEnd = change.position })
+            } else {
             detectTapGestures { tap ->
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val imagePoint = (tap - center - pan) / zoom + center
                 val scale = size.width.toFloat() / bitmap.width
                 currentTap((imagePoint.x / scale).toInt(), (imagePoint.y / scale).toInt())
             }
+            }
         }.semantics { if (study != null) onClick("Study Japanese bubble") { study(); true } }) {
         Image(bitmap.asImageBitmap(), label, Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom; translationX = pan.x; translationY = pan.y }, contentScale = ContentScale.FillBounds)
+        val start = areaStart; val end = areaEnd
+        if (start != null && end != null) androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            val corner = Offset(minOf(start.x, end.x), minOf(start.y, end.y))
+            val extent = androidx.compose.ui.geometry.Size(kotlin.math.abs(end.x - start.x), kotlin.math.abs(end.y - start.y))
+            drawRect(Color(0x443BA4D8), corner, extent)
+            drawRect(Color.White, corner, extent, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
+        }
         if (zoom > 1.05f) FilledTonalButton(onClick = { zoom = 1f; pan = Offset.Zero }, modifier = Modifier.align(Alignment.TopEnd).padding(8.dp), contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) { Text("Reset zoom", style = MaterialTheme.typography.labelSmall) }
     }
 }
@@ -171,7 +205,7 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
     ModalBottomSheet(onDismissRequest = model::closeLesson, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true), containerColor = MaterialTheme.colorScheme.surface) {
         Column(Modifier.fillMaxWidth().testTag("study-sheet").navigationBarsPadding()) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Study dialogue", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
+                Text("This line", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 IconButton(onClick = model::closeLesson) { Icon(AppIcons.Close, "Close lesson", Modifier.size(20.dp)) }
             }
             TabRow(selectedTabIndex = selectedTab, containerColor = MaterialTheme.colorScheme.surface) {
@@ -212,20 +246,29 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                         item { Text("AI explanation · English", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                         when (selectedTab) {
                             0 -> {
-                                item { Text(value.meaning, modifier = Modifier.testTag("lesson-meaning")); Spacer(Modifier.height(16.dp)); SectionLabel("Examples") }
+                                item {
+                                    Text(value.meaning, style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("lesson-meaning"))
+                                    if (value.note.isNotBlank()) Text(value.note, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                                    TextButton(onClick = { selectedTab = 1 }) { Text("How it works") }
+                                }
                                 value.examples.forEachIndexed { index, example ->
                                     item {
+                                        var help by rememberSaveable(line.id, example.text) { mutableStateOf(false) }
+                                        SectionLabel("You could also say")
                                         Text(example.text, style = MaterialTheme.typography.titleMedium)
-                                        Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
                                         Text(example.explanation, Modifier.padding(top = 8.dp))
-                                        Text("Word by word", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.labelLarge)
+                                        TextButton(onClick = { help = !help }, modifier = Modifier.testTag("example-help-$index")) { Text(if (help) "Hide reading & words" else "Reading & words") }
+                                        if (help) {
+                                            Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
+                                            example.words.forEach { word ->
+                                                Text(word.word + " · " + word.reading, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall)
+                                                Text(word.meaning)
+                                            }
+                                        }
                                     }
-                                    example.words.forEach { word -> item {
-                                        Text(word.word + " · " + word.reading, style = MaterialTheme.typography.titleSmall)
-                                        Text(word.meaning)
-                                    } }
                                 }
+                                item { OutlinedButton(onClick = { selectedTab = 3 }) { Text("Try a quick question") } }
                             }
                             1 -> value.grammar.forEach { point -> item { Text(point.text, style = MaterialTheme.typography.titleMedium); Text(point.explanation) } }
                             2 -> {
@@ -239,11 +282,20 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                             }
                             else -> value.exercises.forEachIndexed { index, exercise -> item {
                                 var revealed by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
-                                Text("Exercise " + (index + 1), style = MaterialTheme.typography.labelSmall)
+                                var choice by rememberSaveable(line.id, exercise.question) { mutableStateOf<String?>(null) }
+                                var hint by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
+                                Text("Quick question" + if (value.exercises.size > 1) " " + (index + 1) else "", style = MaterialTheme.typography.labelSmall)
                                 Text(exercise.question, style = MaterialTheme.typography.bodyLarge)
-                                if (exercise.hint.isNotBlank()) Text(exercise.hint, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                exercise.choices.forEach { option ->
+                                    OutlinedButton(onClick = { choice = option }, modifier = Modifier.fillMaxWidth().padding(top = 6.dp)) { Text(option) }
+                                }
+                                if (choice != null) Text(if (choice == exercise.answer) "That fits." else "Not quite. Try another, or open the hint.", Modifier.padding(top = 8.dp).testTag("practice-feedback"))
+                                if (exercise.hint.isNotBlank()) {
+                                    TextButton(onClick = { hint = !hint }) { Text(if (hint) "Hide hint" else "Need a hint?") }
+                                    if (hint) Text(exercise.hint, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
                                 TextButton(onClick = { revealed = !revealed }) { Text(if (revealed) "Hide answer" else "Show answer") }
-                                if (revealed) { Text(exercise.answer, style = MaterialTheme.typography.titleMedium); Text(exercise.answerReading); Text(exercise.explanation) }
+                                if (revealed || choice == exercise.answer) { Text(exercise.answer, style = MaterialTheme.typography.titleMedium); Text(exercise.answerReading); Text(exercise.explanation) }
                             } }
                         }
                     }

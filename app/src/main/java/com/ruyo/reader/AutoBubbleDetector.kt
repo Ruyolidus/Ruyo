@@ -6,7 +6,7 @@ import com.ruyo.ai.OcrLine
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
-data class DetectedBubble(val region: BubbleRegion, val source: String)
+data class DetectedBubble(val region: BubbleRegion, val source: String, val needsReview: Boolean = false)
 data class DetectedGroup(val region: BubbleRegion, val centers: List<Point>, val bubbles: List<DetectedBubble>)
 
 /** OCR locates dialogue; the same conservative selector owns cleanup and fitting. */
@@ -45,7 +45,8 @@ object AutoBubbleDetector {
                 }
                 // Missing OCR lines must not be erased along with recognized neighbors.
                 val covered = uncovered <= maxOf(6, ink / 50)
-                if (!covered || !whole || text.isBlank() || text.length > 2000 || region.eraseMask.none { it }) null else DetectedBubble(region, text)
+                if (!covered || !whole || text.isBlank() || text.length > 2000 || region.eraseMask.none { it }) null
+                else DetectedBubble(TextRegionRepair.refine(source, region, assigned), text)
             }
             DetectedGroup(parent, centers, bubbles)
         }.toMutableList()
@@ -54,12 +55,14 @@ object AutoBubbleDetector {
         for (block in TextRegionRepair.groups(missing)) {
             currentCoroutineContext().ensureActive()
             if (accepted.size >= 40) break
-            val region = TextRegionRepair.select(source, block, valid) ?: continue
+            val smooth = TextRegionRepair.select(source, block, valid)
+            val region = smooth ?: TextRegionRepair.selectArtwork(source, block) ?: continue
+            if (valid.any { it !in block && region.contains(it.x, it.y) }) continue
             if (accepted.any { it.overlaps(region) }) continue
             val text = block.joinToString("\n") { it.text }
             if (text.length > 2000) continue
             accepted += region
-            detected += DetectedGroup(region, listOf(Point(region.width / 2, region.height / 2)), listOf(DetectedBubble(region, text)))
+            detected += DetectedGroup(region, listOf(Point(region.width / 2, region.height / 2)), listOf(DetectedBubble(region, text, needsReview = smooth == null)))
         }
         return detected.filter { it.bubbles.isNotEmpty() }
     }

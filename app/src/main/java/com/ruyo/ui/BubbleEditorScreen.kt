@@ -73,6 +73,23 @@ internal fun BubbleEditorScreen(model: RuyoModel, draft: EditorDraft) {
         }
         item { AiEditorControls(model, draft) }
         item {
+            Column(Modifier.padding(horizontal = 20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Repair shading and texture", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = draft.edit.region.inpaint, onCheckedChange = model::changeCleanup, enabled = !working, modifier = Modifier.testTag("texture-repair"))
+                }
+                if (draft.edit.region.inpaint) Text("Repairs only the red mask using nearby pixels. Check detailed artwork in the preview.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = model::growCleanup, enabled = !working) { Text("Include outline") }
+                    TextButton(onClick = model::rebuildCleanup, enabled = !working) { Text("Rebuild cleanup") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Light lettering", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    Switch(checked = draft.edit.region.textColor == android.graphics.Color.WHITE, onCheckedChange = model::changeTextColor, enabled = !working)
+                }
+            }
+        }
+        item {
             Column(Modifier.padding(horizontal = 20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 if (model.areaSelection != null) TextButton(onClick = model::editAreas, enabled = !working) { Text("Adjust joined bubble areas") }
                 OutlinedTextField(value = draft.edit.japanese, onValueChange = model::changeText, enabled = !working,

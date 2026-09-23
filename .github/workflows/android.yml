@@ -95,9 +95,11 @@ jobs:
           and full chapter preparation with resumable progress before reading.
           Browse a chapter, scroll to load its images, then Extract images for import.
           Original/Translated and series Previous/Next stay visible while reading.
-          Smooth colored panels and captions use OCR-guided lettering cleanup;
-          detailed artwork remains unchanged when cleanup cannot be validated.
-          Tap translated dialogue for AI study with example readings and word help.
+          Overlapping OCR and contrast passes improve outlined-text recognition.
+          Shaded captions and high-contrast art lettering use masked local repair;
+          artwork results need review. Draw area and brush controls handle manual cleanup.
+          Tap translated dialogue for a short explanation, expandable reading help,
+          and a quick choice question.
           Add profiles in Settings > Manage AI providers. Keys stay encrypted on-device.
           Only dialogue text is sent to translation and explanation providers.
 

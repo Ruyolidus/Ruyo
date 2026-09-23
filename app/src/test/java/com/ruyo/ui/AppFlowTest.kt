@@ -37,7 +37,7 @@ class AppFlowTest {
 
     @Before fun resetState() {
         context.filesDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
-        File(context.cacheDir, "lessons-v2").deleteRecursively()
+        File(context.cacheDir, "lessons-v3").deleteRecursively()
         context.getSharedPreferences("settings", 0).edit().clear().commit()
     }
 
@@ -257,6 +257,48 @@ class AppFlowTest {
         assertEquals("fr", context.getSharedPreferences("settings", 0).getString("targetLanguage", null))
     }
 
+    @Test fun anAreaOverArtworkCanBeDrawnBrushedSavedAndReopened() {
+        val source = android.graphics.Bitmap.createBitmap(400, 500, android.graphics.Bitmap.Config.ARGB_8888)
+        source.eraseColor(android.graphics.Color.rgb(70, 110, 160))
+        android.graphics.Canvas(source).drawCircle(200f, 200f, 3f, android.graphics.Paint().apply { color = android.graphics.Color.BLACK })
+        val store = LocalBookStore(context); val book = store.addBitmap("Artwork fixture", source)
+        val model = RuyoModel(context)
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-${book.id}")
+        compose.onNodeWithTag("book-${book.id}").performClick()
+        awaitTag("imported-page")
+        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("draw-text-area").performClick()
+        compose.onNodeWithTag("imported-page").performTouchInput {
+            down(Offset(width * .25f, height * .20f)); advanceEventTime(700)
+            moveTo(Offset(width * .75f, height * .60f)); up()
+        }
+        awaitTag("bubble-editor")
+        awaitState { !model.busy }
+        assertTrue(model.draft!!.edit.region.inpaint)
+        assertFalse(model.draft!!.edit.region.eraseMask.any { it })
+        compose.onNodeWithTag("japanese-input").performScrollTo().performTextInput("よし")
+        compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
+        awaitState { model.draft?.previewError != null && !model.busy }
+        compose.onNodeWithTag("save-edit").assertIsNotEnabled()
+        compose.onNodeWithTag("editor-canvas").performScrollTo().performTouchInput { click(center) }
+        assertTrue(model.draft!!.edit.region.eraseMask.any { it })
+        compose.onNodeWithTag("preview-edit").performScrollTo().performClick()
+        awaitState { model.draft?.preview != null && !model.busy }
+        capture("manual-artwork-preview")
+        compose.onNodeWithTag("save-edit").performClick()
+        awaitTag("book-reader"); awaitState { !model.busy }
+        val reopened = store.open(book)
+        assertTrue(reopened.edits.single().region.inpaint)
+        assertEquals("よし", reopened.edits.single().japanese)
+        assertEquals(source.getPixel(10, 10), reopened.displayed.getPixel(10, 10))
+        assertEquals(source.getPixel(200, 200), reopened.original.getPixel(200, 200))
+        compose.runOnIdle { model.selectBubble(200, 200, reopened) }
+        awaitTag("bubble-editor"); awaitState { model.draft?.preview != null && !model.busy }
+        assertTrue(model.draft!!.existing)
+        assertTrue(model.draft!!.edit.region.inpaint)
+    }
+
     @Test fun recognizedTextTranslatesPreviewsAndSavesWithoutLosingTheEditor() {
         val source = SampleChapter.build().first().original
         val store = LocalBookStore(context); val book = store.addBitmap("AI test", source)
@@ -353,7 +395,8 @@ class AppFlowTest {
                 assertEquals("待って！", text); assertEquals("ja", language); lessons++
                 AiLesson("Wait! A casual request.", "matte", listOf(LessonPoint("待って", "The te-form makes a casual request.")),
                     listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonExample("少し待って。", "すこしまって。", "Sukoshi matte.", "Wait a little. The te-form asks someone to wait.", listOf(LessonWord("少し", "すこし", "a little", "N5"), LessonWord("待って", "まって", "wait, as a casual request", "N5")))),
-                    listOf(LessonExercise("What is the dictionary form of 待って?", "待つ", "待って is the te-form of 待つ.", "待って (まって / matte) means wait, as a request.", "まつ / matsu")))
+                    listOf(LessonExercise("Your friend is walking off while you tie your shoe. What fits?", "待って！", "Exactly: you're asking them to wait a moment.", "待って (まって / matte): wait. ありがとう (arigatou): thanks. おはよう (ohayou): good morning.", "まって / matte", listOf("ありがとう！", "待って！", "おはよう！"))),
+                    note = "Someone's saying 'hang on!' The little て ending turns wait into something you can ask a friend to do.")
             })
         compose.setContent { RuyoApp(model) }
         awaitTag("book-sample")
@@ -411,10 +454,14 @@ class AppFlowTest {
         awaitTag("study-sheet")
         awaitState { model.explanation != null && !model.explanationBusy }
         assertEquals(1, lessons)
+        compose.onNodeWithTag("example-reading-0").assertDoesNotExist()
+        capture("ai-lesson-conversation", "study-sheet")
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("example-help-0"))
+        compose.onNodeWithTag("example-help-0").performClick()
         compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("example-reading-0"))
         compose.onNodeWithText("すこしまって。").assertExists()
         compose.onNodeWithText("Sukoshi matte.").assertExists()
-        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("Word by word"))
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("a little"))
         capture("ai-lesson-readable-example", "study-sheet")
         compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("a little"))
         compose.onNodeWithText("少し · すこし").assertExists()
@@ -422,9 +469,13 @@ class AppFlowTest {
         compose.onNodeWithText("The te-form makes a casual request.").assertExists()
         capture("ai-lesson", "study-sheet")
         compose.onNodeWithText("Practice").performClick()
-        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("Show answer"))
-        compose.onNodeWithText("Show answer").performClick()
-        compose.onNodeWithText("待つ").assertExists()
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("ありがとう！"))
+        compose.onNodeWithText("ありがとう！").performClick()
+        compose.onNodeWithTag("practice-feedback").assertTextContains("Not quite. Try another, or open the hint.")
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasText("待って！"))
+        compose.onNode(hasText("待って！") and hasAnyAncestor(hasTestTag("lesson-content"))).performClick()
+        compose.onNodeWithTag("practice-feedback").assertTextContains("That fits.")
+        capture("ai-lesson-quick-question", "study-sheet")
         compose.onNodeWithContentDescription("Close lesson").performClick()
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
         awaitTag("study-sheet")
@@ -511,7 +562,7 @@ class AppFlowTest {
         awaitState { !model.preparationRunning && model.preparationReports.size == 2 }
         assertNull(model.preparationError); assertEquals(3, calls)
         val book = model.chapter!!
-        assertEquals(2, LocalBookStore(context).preparation(book, "cleanup-v2:ja:LATIN").size)
+        assertEquals(2, LocalBookStore(context).preparation(book, "cleanup-v3:ja:LATIN").size)
         assertTrue(book.pages.all { store.openPage(book, it).edits.size == 1 })
         compose.onNodeWithTag("read-prepared-chapter").performClick()
         awaitTag("book-reader"); awaitState { !model.busy }

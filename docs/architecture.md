@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.5.1)
+## Current scope (0.6.0)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -183,8 +183,8 @@ images to a provider. Models and network conditions still determine API latency.
 3. Improve source adapters for specific lazy-loading and virtualized sites. Keep
    native reading and provider access isolated from page scripts.
 4. Add selectable explanation languages and an independently chosen lesson profile.
-5. Add manual narration regions and gradient/textured-background repair with
-   explicit quality checks, plus licensed custom font import.
+5. Improve detailed-artwork reconstruction and recognition on a broader corpus,
+   plus licensed custom font import.
 6. Extend permitted source adapters and background preparation. On-phone inference
    remains separate from connecting to a local model server.
 
@@ -265,3 +265,34 @@ hints and answer readings are separate from the hidden answer. Prompts request
 simple vocabulary and plain-English grammar terms. These structural checks do
 not guarantee factual accuracy of model explanations. The lessons-v2 cache
 invalidates previous incomplete examples without touching saved sentences.
+
+## Shaded and artwork cleanup (0.6.0)
+
+`BubbleOcr.lines` runs raw and adaptive-contrast recognition on overlapping 1280 ×
+1536 tiles of the bounded working bitmap, merging spatial duplicates. It retains
+its native-task bitmap ownership and mutex after cancellation. Selected-area OCR
+also retries contrast when the raw result is empty. No image goes to a provider.
+
+`TextRegionRepair` first validates a smooth RGB plane. Its shaded fallback samples
+background strips per row and isolates contrast within OCR halos, including source
+outlines. A separate artwork fallback selects a dominant high-contrast lettering
+color, validates connected components, and marks accepted repairs for review.
+`LocalInpainter` fills a mask from its boundary inward using nearby known pixels and
+bounded gradient extrapolation. Unmasked pixels are unchanged. This is a local
+repair heuristic, not OpenCV Telea or a neural model; complex hidden artwork is
+not guaranteed to be reconstructed. The same text containment gate still applies.
+
+Manual Draw area opens a bounded rectangular layout with an empty cleanup mask.
+Users brush the lettering or rebuild cleanup using OCR. Empty masks cannot preview
+as an inpainted replacement. Repair mode, text color and masks persist per edit;
+older saves default to their prior fill mode. Include outline grows only within
+the region. Rebuild cleanup preserves user wording and style. Preparation uses
+`cleanup-v3`; it never silently overwrites existing saved translations.
+
+Lesson prompts now ask for conversational observations instead of a textbook
+opening, one useful example and one small scenario question. The first tab shows
+meaning and the note; example readings and word help expand on request. Choice
+questions provide immediate feedback and optional hints. Duplicate options and
+answers absent from the choices are rejected. `lessons-v3` refreshes older cached
+lessons. Provider output remains unverified for factual accuracy; no paid-provider
+latency or pedagogical effectiveness claim follows from fixture tests.

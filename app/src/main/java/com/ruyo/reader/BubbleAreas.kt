@@ -91,7 +91,7 @@ object BubbleAreas {
             require(cw >= 16 && ch >= 16) { "One area is too small. Move or remove its center." }
             val shape = BooleanArray(cw * ch) { owners[(top + it / cw) * w + left + it % cw] == owner }
             val erase = BooleanArray(shape.size) { shape[it] && region.eraseMask[(top + it / cw) * w + left + it % cw] }
-            BubbleRegion(region.left + left, region.top + top, PixelMask(cw, ch, shape), erase, region.backgroundColor, region.backgroundSurface, region.textColor)
+            BubbleRegion(region.left + left, region.top + top, PixelMask(cw, ch, shape), erase, region.backgroundColor, region.backgroundSurface, region.textColor, region.inpaint)
         }
     }
 }

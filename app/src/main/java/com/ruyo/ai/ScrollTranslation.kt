@@ -108,7 +108,7 @@ class PageTranslationPipeline(
             candidates += group.bubbles.filter { bubble -> existing.none { it.region.overlaps(bubble.region) } }
         }
         val pending = candidates.take((40 - existing.size).coerceAtLeast(0))
-        var skipped = candidates.size - pending.size; var count = 0; var offset = 0
+        var skipped = candidates.size - pending.size; var count = 0; var offset = 0; var artworkRepairs = 0
         fun key(bubble: DetectedBubble) = listOf(sourceKey, bubble.region.left, bubble.region.top, bubble.region.width, bubble.region.height,
             secret.profile.id, secret.profile.baseUrl, secret.profile.model, settings.language, bubble.source).joinToString("|")
         while (offset < pending.size) {
@@ -144,15 +144,16 @@ class PageTranslationPipeline(
                 if (!fits) { skipped++; continue }
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) { store.saveEdit(page.book.id, page.original, edit, page.page.id) }
-                existing += edit; count++; saved = true
+                existing += edit; count++; if (bubble.needsReview) artworkRepairs++; saved = true
             }
             if (saved) changed()
         }
         val uncovered = lines.count { line -> existing.none { it.languageTag == settings.language && it.region.contains(line.x, line.y) } }
-        val review = skipped > 0 || uncovered > 0
+        val review = skipped > 0 || uncovered > 0 || artworkRepairs > 0
         val note = when {
             lines.isEmpty() -> "No dialogue detected. Check the original page."
-            review -> "Some lettering needs review; unsupported areas keep their original pixels."
+            skipped > 0 || uncovered > 0 -> "Some lettering needs review; unsupported areas keep their original pixels."
+            artworkRepairs > 0 -> "Text over artwork was repaired. Check the result against Original."
             else -> "Detected dialogue is ready."
         }
         return PagePreparation(note, review)

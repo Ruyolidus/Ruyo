@@ -51,7 +51,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var preparationReports by mutableStateOf<Map<String, PagePreparation>>(emptyMap()); private set
     private var preparationJob: Job? = null
     private var prepareAfterTask = false
-    private val preparationKey get() = "cleanup-v2:" + targetLanguage + ":" + ocrScript.name
+    private val preparationKey get() = "cleanup-v3:" + targetLanguage + ":" + ocrScript.name
     fun seriesFor(bookId: String) = series.firstOrNull { bookId in it.chapters }
     fun orderedChapters(seriesId: String): List<LocalBook> = series.firstOrNull { it.id == seriesId }?.chapters.orEmpty().mapNotNull { id -> books.firstOrNull { it.id == id } }
     fun neighbor(delta: Int): LocalBook? {
@@ -175,6 +175,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var ready by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null)
     var selecting by mutableStateOf(false)
+    var drawingArea by mutableStateOf(false)
     var selectionError by mutableStateOf<String?>(null); private set
     var japanese by mutableStateOf(true)
     var webHostActive by mutableStateOf(false); private set
@@ -449,6 +450,18 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         pageLoader.clear()
         selectBubbleInPage(pageLoader.load(book.book, book.page), x, y)
     }
+    fun selectTextArea(left: Int, top: Int, right: Int, bottom: Int, page: OpenBook) = task {
+        pausePreparation()?.join(); scrollTranslation?.pause()?.join(); editorWebIndex = null
+        pageLoader.clear()
+        val book = pageLoader.load(page.book, page.page)
+        val x = left.coerceIn(0, book.original.width); val y = top.coerceIn(0, book.original.height)
+        val w = right.coerceIn(0, book.original.width) - x; val h = bottom.coerceIn(0, book.original.height) - y
+        if (w < 16 || h < 16 || w.toLong() * h > 900_000) { selectionError = "Draw an area around one text block, with a little space on every side."; return@task }
+        val region = BubbleRegion(x, y, PixelMask(w, h, BooleanArray(w * h) { true }), BooleanArray(w * h), android.graphics.Color.WHITE, inpaint = true)
+        if (book.edits.any { it.region.overlaps(region) }) { selectionError = "This area overlaps a saved translation. Open that translation to edit it, or draw a separate area."; return@task }
+        selectionError = null; areaSelection = null; drawingArea = false
+        openEditor(book, region)
+    }
     private suspend fun selectBubbleInPage(book: OpenBook, x: Int, y: Int) {
         selectionError = null
         val existing = book.edits.findLast { it.region.contains(x, y) }
@@ -462,10 +475,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                     TextRegionRepair.groups(lines).firstOrNull { group -> group.any { line ->
                         val halo = maxOf(4, (line.bottom - line.top) / 3)
                         x in (line.left - halo)..(line.right + halo) && y in (line.top - halo)..(line.bottom + halo)
-                    } }?.let { TextRegionRepair.select(book.original, it, lines) }
+                    } }?.let { TextRegionRepair.select(book.original, it, lines) ?: TextRegionRepair.selectArtwork(book.original, it) }
                 }
                 if (fallback == null || book.edits.any { it.region.overlaps(fallback) }) {
-                    selectionError = "Could not isolate the lettering on a smooth background. Check Original text in reader settings, then tap the lettering. Detailed artwork still needs manual cleanup."
+                    selectionError = "Automatic selection could not isolate this text. Choose Draw area, hold and drag around the lettering, then brush the letters to repair them."
                     return
                 }
                 fallback
@@ -515,7 +528,29 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         openEditor(book, selected)
         message = if (parts.getOrThrow().size > 1) "Areas saved. Tap each part in the reader to edit it independently." else "Using one text area"
     }
-    fun toggleSelection() { pauseScrolling(); selectionError = null; selecting = !selecting }
+    fun toggleSelection() { pauseScrolling(); selectionError = null; selecting = !selecting; drawingArea = false }
+    fun changeCleanup(inpaint: Boolean) { updateLettering { it.copy(region = it.region.copy(inpaint = inpaint)) } }
+    fun changeTextColor(light: Boolean) { updateLettering { it.copy(region = it.region.copy(textColor = if (light) android.graphics.Color.WHITE else android.graphics.Color.BLACK)) } }
+    fun growCleanup() {
+        if (busy) return
+        val current = draft ?: return
+        val region = current.edit.region; val safe = region.interior.inset(2); val ink = region.eraseMask.copyOf()
+        for (i in region.eraseMask.indices) if (region.eraseMask[i]) for (dy in -2..2) for (dx in -2..2) {
+            val x = i % region.width + dx; val y = i / region.width + dy
+            if (safe[x, y]) ink[y * region.width + x] = true
+        }
+        updateLettering { it.copy(region = it.region.copy(eraseMask = ink)) }
+    }
+    fun rebuildCleanup() = task {
+        cancelAi()
+        val current = draft ?: return@task; val book = opened ?: return@task
+        val lines = withContext(Dispatchers.Default) { ocrService.lines(book.original, ocrScript) }
+        val assigned = lines.filter { current.edit.region.contains(it.x, it.y) }
+        if (assigned.isEmpty()) { message = "No text was recognized here. Brush the lettering to create the cleanup mask."; return@task }
+        val region = withContext(Dispatchers.Default) { TextRegionRepair.refine(book.original, current.edit.region, assigned) }
+        draft = current.copy(edit = current.edit.copy(region = region), initialMask = region.eraseMask.copyOf(), preview = null, previewError = null, revision = current.revision + 1)
+        automaticEditorId = current.edit.id
+    }
     fun changeText(value: String) { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeEditLanguage(value: String) { updateLettering { it.copy(languageTag = TextLanguages.normalize(value)) } }
     fun changeFont(value: String) { updateLettering { it.copy(fontFamily = LetteringFont.fromId(value).family) } }
