@@ -42,6 +42,8 @@ data class BubbleEdit(
     val italic: Boolean = false,
     val sourceLetterHeight: Float? = null,
     val matchSourceSize: Boolean = false,
+    val cleanupVersion: Int = 0,
+    val cleanupLocked: Boolean = false,
 )
 
 sealed interface SelectionResult {
@@ -214,9 +216,17 @@ object BubbleEditRenderer {
         require(edit.fontScale.isFinite() && edit.fontScale in 0.6f..1.6f) { "Choose a text size between 60% and 160%." }
         val preferred = preferredSize(source.width, edit)
         val minimum = min(preferred, 6f)
-        val result = BubbleFitter().fit(edit.japanese, safe, preferred, minimum,
+        val result = BubbleFitter().fit(LetteringText.normalize(edit.japanese), safe, preferred, minimum,
             textColor = region.textColor, languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic))
         require(result is FitResult.Accepted) { (result as FitResult.Rejected).reason }
+        val pixels = cleanedPixels(source, region)
+        val crop = Bitmap.createBitmap(region.width, region.height, Bitmap.Config.ARGB_8888)
+        crop.setPixels(pixels, 0, region.width, 0, 0, region.width, region.height)
+        Canvas(crop).drawBitmap(result.ink, 0f, 0f, null)
+        BubblePreview(crop, result)
+    }
+
+    internal fun cleanedPixels(source: Bitmap, region: BubbleRegion): IntArray {
         val pixels = IntArray(region.width * region.height)
         source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
         if (region.inpaint) {
@@ -224,10 +234,7 @@ object BubbleEditRenderer {
             LocalInpainter.repair(pixels, region.width, region.height, mask).copyInto(pixels)
         } else for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] =
             region.backgroundSurface?.colorAt(region.left + i % region.width, region.top + i / region.width) ?: region.backgroundColor
-        val crop = Bitmap.createBitmap(region.width, region.height, Bitmap.Config.ARGB_8888)
-        crop.setPixels(pixels, 0, region.width, 0, 0, region.width, region.height)
-        Canvas(crop).drawBitmap(result.ink, 0f, 0f, null)
-        BubblePreview(crop, result)
+        return pixels
     }
 
     fun composite(source: Bitmap, edits: List<BubbleEdit>): Bitmap {

@@ -182,6 +182,12 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
     }
     @Synchronized fun removeBook(bookId: String) { check(folder(bookId).deleteRecursively()) { "The chapter could not be removed." } }
 
+    @Synchronized fun backupCleanup(page: OpenBook) {
+        val folder = pageFolder(page.book, page.page)
+        val backup = File(folder, "edits-before-cleanup-v5.json")
+        if (!backup.exists()) write(backup, read(File(folder, "edits.json")))
+    }
+
     @Synchronized fun textTranslations(page: OpenBook): Map<String, String> {
         val file = File(pageFolder(page.book, page.page), "text-translations.json")
         if (!file.exists()) return emptyMap()
@@ -189,7 +195,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
         val data = JSONObject(read(file)); require(data.length() <= 300)
         return data.keys().asSequence().associateWith { key ->
             require(key.matches(Regex("[a-f0-9]{64}")))
-            data.getString(key).also { require(it.isNotBlank() && it.length <= 512) }
+            com.ruyo.reader.LetteringText.normalize(data.getString(key)).also { require(it.isNotBlank() && it.length <= 512) }
         }
     }
     @Synchronized fun saveTextTranslation(page: OpenBook, key: String, text: String) {
@@ -288,17 +294,18 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             }
             val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"),
                 surface, obj.optInt("textColor", Color.rgb(39, 42, 53)), obj.optBoolean("inpaint"))
-            BubbleEdit(obj.getString("id"), region, obj.getString("text"), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat(),
+            BubbleEdit(obj.getString("id"), region, com.ruyo.reader.LetteringText.normalize(obj.getString("text")), obj.getInt("margin"), obj.optDouble("fontScale", 1.0).toFloat(),
                 languageTag = obj.optString("language", "ja"), fontFamily = obj.optString("fontFamily", "sans-serif"),
                 bold = obj.optBoolean("bold"), italic = obj.optBoolean("italic"),
                 sourceLetterHeight = obj.optDouble("sourceLetterHeight", Double.NaN).toFloat().takeIf { it.isFinite() && it > 0f },
-                matchSourceSize = obj.optBoolean("matchSourceSize"))
+                matchSourceSize = obj.optBoolean("matchSourceSize"), cleanupVersion = obj.optInt("cleanupVersion"), cleanupLocked = obj.optBoolean("cleanupLocked"))
         }
     }
     private fun writeEdits(dir: File, edits: List<BubbleEdit>) = write(File(dir, "edits.json"), JSONArray().apply {
         edits.forEach { edit -> put(JSONObject().put("id", edit.id).put("text", edit.japanese).put("margin", edit.margin).put("fontScale", edit.fontScale.toDouble())
             .put("language", edit.languageTag).put("fontFamily", edit.fontFamily).put("bold", edit.bold).put("italic", edit.italic)
             .put("sourceLetterHeight", edit.sourceLetterHeight?.toDouble()).put("matchSourceSize", edit.matchSourceSize)
+            .put("cleanupVersion", edit.cleanupVersion).put("cleanupLocked", edit.cleanupLocked)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
             .put("inpaint", edit.region.inpaint).put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
                 .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)).put("rows", JSONArray(s.rows)) })

@@ -22,7 +22,7 @@ import java.util.concurrent.Executor
 enum class OcrScript(val label: String) {
     LATIN("Latin (English, French…)"), JAPANESE("Japanese"), CHINESE("Chinese"), KOREAN("Korean"), DEVANAGARI("Devanagari (Hindi…)")
 }
-data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f) {
+data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f, val angle: Float = 0f) {
     val x get() = (left + right) / 2
     val y get() = (top + bottom) / 2
 }
@@ -60,7 +60,7 @@ class BubbleOcr(context: Context? = null) : OcrService {
                     text.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { r ->
                         if (line.text.isBlank() || r.width() <= 0 || r.height() <= 0) null
                         else OcrLine(line.text.trim(), (r.left + tile.left).coerceAtLeast(0), (r.top + tile.top).coerceAtLeast(0),
-                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence)
+                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence, slope(line))
                     } }
                 }
                 OcrTiles.merge(found, result)
@@ -74,10 +74,14 @@ class BubbleOcr(context: Context? = null) : OcrService {
                 for (local in boxes) {
                     currentCoroutineContext().ensureActive()
                     val box = Rect(local).apply { offset(tile.left, tile.top) }
-                    val alreadyRead = found.any { line -> line.confidence >= .94f && box.contains(line.x, line.y) &&
+                    val alreadyRead = found.any { line -> line.confidence >= .68f && box.contains(line.x, line.y) &&
                         line.right - line.left >= box.width() * .60f && line.bottom - line.top >= box.height() * .35f }
                     if (alreadyRead) continue
-                    for (contrast in listOf(false, true)) OcrTiles.merge(found, recognizeBox(source, box, script, contrast))
+                    val hint = found.filter { box.contains(it.x, it.y) }.minByOrNull { it.confidence }
+                    val angle = hint?.angle ?: 0f
+                    for (contrast in listOf(false, true)) OcrTiles.merge(found, recognizeBox(source, box, script, contrast, angle = angle))
+                    if (hint == null || hint.confidence < .65f) for (isolate in 1..2)
+                        OcrTiles.merge(found, recognizeBox(source, box, script, false, isolate, angle))
                     require(found.size <= 300) { "This image has too many separate text lines." }
                 }
             }
@@ -85,21 +89,37 @@ class BubbleOcr(context: Context? = null) : OcrService {
         return found.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
     }
 
-    private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean): List<OcrLine> {
+    private fun slope(line: Text.Line): Float {
+        val points = line.cornerPoints ?: return 0f
+        if (points.size < 2) return 0f
+        return Math.toDegrees(kotlin.math.atan2((points[1].y - points[0].y).toDouble(), (points[1].x - points[0].x).toDouble())).toFloat().coerceIn(-25f, 25f)
+    }
+
+    private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean, isolate: Int = 0, angle: Float = 0f): List<OcrLine> {
         val scale = (96f / rect.height()).coerceIn(1f, 3f)
         val w = (rect.width() * scale).toInt(); val h = (rect.height() * scale).toInt()
+        val radians = Math.toRadians(angle.toDouble())
+        val bw = (w * kotlin.math.abs(kotlin.math.cos(radians)) + h * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
+        val bh = (h * kotlin.math.abs(kotlin.math.cos(radians)) + w * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
+        val mapping = android.graphics.Matrix().apply {
+            setRectToRect(android.graphics.RectF(rect), android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Matrix.ScaleToFit.FILL)
+            postRotate(-angle); postTranslate(bw / 2f, bh / 2f)
+        }
+        val inverse = android.graphics.Matrix(); check(mapping.invert(inverse))
         return process(script, {
-            Bitmap.createBitmap(w + 32, h + 32, Bitmap.Config.ARGB_8888).also { bitmap ->
+            Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { bitmap ->
                 bitmap.eraseColor(Color.WHITE)
-                android.graphics.Canvas(bitmap).drawBitmap(source, rect, Rect(16, 16, w + 16, h + 16), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                val canvas = android.graphics.Canvas(bitmap)
+                canvas.translate(bw / 2f, bh / 2f); canvas.rotate(-angle)
+                canvas.drawBitmap(source, rect, android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
                 if (contrast) OcrTiles.contrast(bitmap)
+                if (isolate != 0) OcrTiles.isolate(bitmap, isolate == 2)
             }
         }) { result -> result.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { bounds ->
-            val left = (rect.left + (bounds.left - 16) * rect.width().toFloat() / w).toInt().coerceIn(0, source.width)
-            val top = (rect.top + (bounds.top - 16) * rect.height().toFloat() / h).toInt().coerceIn(0, source.height)
-            val right = (rect.left + (bounds.right - 16) * rect.width().toFloat() / w).toInt().coerceIn(0, source.width)
-            val bottom = (rect.top + (bounds.bottom - 16) * rect.height().toFloat() / h).toInt().coerceIn(0, source.height)
-            if (line.text.isBlank() || right <= left || bottom <= top) null else OcrLine(line.text.trim(), left, top, right, bottom, line.confidence)
+            val original = android.graphics.RectF(bounds); inverse.mapRect(original)
+            val left = original.left.toInt().coerceIn(0, source.width); val top = original.top.toInt().coerceIn(0, source.height)
+            val right = original.right.toInt().coerceIn(0, source.width); val bottom = original.bottom.toInt().coerceIn(0, source.height)
+            if (line.text.isBlank() || right <= left || bottom <= top) null else OcrLine(line.text.trim(), left, top, right, bottom, line.confidence, slope(line) + angle)
         } } }
     }
 
@@ -172,9 +192,22 @@ internal object OcrTiles {
                 val other = existing[duplicate]
                 // A full line from the overlap can replace a fragment at a tile boundary.
                 if ((line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) ||
-                    (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) existing[duplicate] = line
+                    (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) existing[duplicate] = line.copy(
+                        left = minOf(line.left, other.left), top = minOf(line.top, other.top),
+                        right = maxOf(line.right, other.right), bottom = maxOf(line.bottom, other.bottom))
             }
         }
+    }
+    /** Isolate neutral dark cores or bright lettering from colored comic artwork for OCR only. */
+    fun isolate(bitmap: Bitmap, light: Boolean) {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        for (i in pixels.indices) {
+            val c = pixels[i]; val lo = minOf(Color.red(c), Color.green(c), Color.blue(c)); val hi = maxOf(Color.red(c), Color.green(c), Color.blue(c))
+            val foreground = if (light) lo > 190 else hi < 115 && hi - lo < 55
+            pixels[i] = if (foreground) Color.BLACK else Color.WHITE
+        }
+        bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
     }
     fun contrast(bitmap: Bitmap) {
         val w = bitmap.width; val h = bitmap.height

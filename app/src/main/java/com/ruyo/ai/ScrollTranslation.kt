@@ -94,6 +94,27 @@ class PageTranslationPipeline(
             withContext(Dispatchers.Default) { ocr.lines(page.original, settings.script) }.also { lineCache[sourceKey] = it }
         }
         val existing = page.edits.toMutableList()
+        var repairedSaved = 0
+        for (index in existing.indices) {
+            currentCoroutineContext().ensureActive()
+            if (!keepGoing()) return null
+            val edit = existing[index]
+            if (edit.cleanupVersion >= 5 || edit.cleanupLocked) continue
+            val sourceLines = lines.filter { edit.region.contains(it.x, it.y) }
+            if (sourceLines.isEmpty()) continue
+            val region = withContext(Dispatchers.Default) { TextRegionRepair.refine(page.original, edit.region, sourceLines) }
+            if (region === edit.region) continue
+            val replacement = edit.copy(region = region, cleanupVersion = 5)
+            val valid = withContext(Dispatchers.Default) { BubbleEditRenderer.preview(page.original, replacement).fold(
+                onSuccess = { it.crop.recycle(); it.fit.ink.recycle(); true }, onFailure = { false }) }
+            if (!valid) continue
+            withContext(Dispatchers.IO) {
+                store.backupCleanup(page)
+                store.saveEdit(page.book.id, page.original, replacement, page.page.id)
+            }
+            existing[index] = replacement; repairedSaved++
+        }
+        if (repairedSaved > 0) changed()
         val remaining = lines.filter { line -> existing.none { it.region.contains(line.x, line.y) } }
         val candidates = withContext(Dispatchers.Default) { AutoBubbleDetector.analyze(page.original, remaining, lines) { store.areaCenters(page, it) } }
         if (!keepGoing()) return null
@@ -134,7 +155,7 @@ class PageTranslationPipeline(
                 val sourceHeight = area.lines.map { (it.bottom - it.top).toFloat() }.sorted().let { it[it.size / 2] }
                 val edit = BubbleEdit(region = region, japanese = requireNotNull(cached[key(area)]),
                     margin = maxOf(2, minOf(region.width, region.height) / 14), languageTag = settings.language,
-                    sourceLetterHeight = sourceHeight, matchSourceSize = true)
+                    sourceLetterHeight = sourceHeight, matchSourceSize = true, cleanupVersion = 5)
                 val fits = withContext(Dispatchers.Default) {
                     BubbleEditRenderer.preview(page.original, edit).fold(onSuccess = { preview ->
                         preview.crop.recycle(); preview.fit.ink.recycle(); true

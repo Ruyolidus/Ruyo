@@ -40,7 +40,7 @@ object TextRegionRepair {
                 val next = remaining.firstOrNull { line ->
                     val overlap = minOf(line.right, last.right) - maxOf(line.left, last.left)
                     val otherHeight = line.bottom - line.top
-                    line.top >= last.bottom - height / 5 && line.top - last.bottom <= height * .7 &&
+                    line.top >= last.top + height * .30 && line.top - last.bottom <= height * .7 &&
                         otherHeight in (height / 2)..(height * 2) && overlap >= minOf(line.right - line.left, last.right - last.left) * .5
                 } ?: break
                 group += next; remaining.remove(next)
@@ -51,7 +51,85 @@ object TextRegionRepair {
     }
 
     fun select(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines): BubbleRegion? =
-        selectFlat(source, lines, allLines) ?: selectShaded(source, lines, allLines)
+        selectUniform(source, lines, allLines) ?: selectFlat(source, lines, allLines) ?: selectShaded(source, lines, allLines)
+
+    /** Whole foreground components on a stable background; outlines entering the crop stay protected. */
+    private fun selectUniform(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine>): BubbleRegion? {
+        if (lines.isEmpty() || lines.size > 8) return null
+        val size = lines.map { it.bottom - it.top }.sorted()[lines.size / 2]
+        if (size < 8) return null
+        val halo = (size / 2).coerceIn(5, 40)
+        val pad = halo + 8
+        val left = (lines.minOf { it.left } - pad).coerceAtLeast(0)
+        val top = (lines.minOf { it.top } - pad).coerceAtLeast(0)
+        val right = (lines.maxOf { it.right } + pad).coerceAtMost(source.width)
+        val bottom = (lines.maxOf { it.bottom } + pad).coerceAtMost(source.height)
+        val w = right - left; val h = bottom - top
+        if (w < 16 || h < 16 || w.toLong() * h > 900_000) return null
+        fun inText(x: Int, y: Int, extra: Int = 0) = lines.any { x in it.left - extra until it.right + extra && y in it.top - extra until it.bottom + extra }
+        val pixels = IntArray(w * h); source.getPixels(pixels, 0, w, left, top, w, h)
+        val samples = pixels.indices.filter { !inText(left + it % w, top + it / w, halo / 2) }.map { pixels[it] }
+        if (samples.size < 24) return null
+        fun median(channel: (Int) -> Int) = samples.map(channel).sorted()[samples.size / 2]
+        val background = Color.rgb(median(Color::red), median(Color::green), median(Color::blue))
+        if (samples.count { distance(it, background) <= 10 } < samples.size * .70) return null
+        val bins = IntArray(512)
+        fun bin(c: Int) = Color.red(c) / 32 * 64 + Color.green(c) / 32 * 8 + Color.blue(c) / 32
+        for (i in pixels.indices) if (inText(left + i % w, top + i / w) && distance(pixels[i], background) > 45) bins[bin(pixels[i])]++
+        val dominant = bins.indices.maxBy { bins[it] }
+        if (bins[dominant] < 8) return null
+        val target = Color.rgb(dominant / 64 * 32 + 16, dominant / 8 % 8 * 32 + 16, dominant % 8 * 32 + 16)
+        val foreground = BooleanArray(pixels.size) { distance(pixels[it], background) > 14 }
+        val protected = BooleanArray(pixels.size); val queue = IntArray(pixels.size)
+        val boundary = pixels.indices.filter { foreground[it] && (it % w == 0 || it % w == w - 1 || it / w == 0 || it / w == h - 1) }
+        val borderBins = IntArray(512); boundary.forEach { borderBins[bin(pixels[it])]++ }
+        val borderBin = borderBins.indices.maxBy { borderBins[it] }
+        val borderColor = Color.rgb(borderBin / 64 * 32 + 16, borderBin / 8 % 8 * 32 + 16, borderBin % 8 * 32 + 16)
+        fun borderPixel(i: Int) = foreground[i] && distance(pixels[i], borderColor) <= 48
+        var head = 0; var tail = 0
+        for (i in boundary) if (borderPixel(i)) { protected[i] = true; queue[tail++] = i }
+        fun adjacent(i: Int, visit: (Int) -> Unit) {
+            val x = i % w; val y = i / w
+            for (dy in -1..1) for (dx in -1..1) {
+                val xx = x + dx; val yy = y + dy
+                if (xx in 0 until w && yy in 0 until h) visit(yy * w + xx)
+            }
+        }
+        while (head < tail) adjacent(queue[head++]) { j -> if (borderPixel(j) && !protected[j]) { protected[j] = true; queue[tail++] = j } }
+        val textPixels = pixels.indices.count { inText(left + it % w, top + it / w) }
+        if (pixels.indices.count { protected[it] && inText(left + it % w, top + it / w) } > maxOf(8, textPixels / 25)) return null
+        // A border/art stroke connected to source lettering cannot be safely flattened.
+        if (pixels.indices.count { protected[it] && inText(left + it % w, top + it / w) && distance(pixels[it], target) <= 48 } > maxOf(6, bins[dominant] / 20)) return null
+        val seen = BooleanArray(pixels.size); val raw = BooleanArray(pixels.size)
+        for (start in pixels.indices) if (foreground[start] && !protected[start] && !seen[start]) {
+            head = 0; tail = 1; queue[0] = start; seen[start] = true
+            var hits = 0; var x0 = w; var x1 = 0; var y0 = h; var y1 = 0
+            while (head < tail) {
+                val i = queue[head++]; val x = i % w; val y = i / w
+                if (inText(left + x, top + y, halo / 2)) hits++
+                x0 = minOf(x0, x); x1 = maxOf(x1, x); y0 = minOf(y0, y); y1 = maxOf(y1, y)
+                adjacent(i) { j -> if (foreground[j] && !protected[j] && !seen[j]) { seen[j] = true; queue[tail++] = j } }
+            }
+            if (hits < 2 || tail < 3 || y1 - y0 > size * 1.8 || x1 - x0 > size * 5) continue
+            for (n in 0 until tail) raw[queue[n]] = true
+        }
+        val ink = BooleanArray(pixels.size); val grow = (size / 10).coerceIn(2, 5)
+        for (i in raw.indices) if (raw[i]) for (dy in -grow..grow) for (dx in -grow..grow) {
+            val x = i % w + dx; val y = i / w + dy
+            if (x in 1 until w - 1 && y in 1 until h - 1 && !protected[y * w + x]) ink[y * w + x] = true
+        }
+        if (ink.count { it } < 8 || ink.count { it } > pixels.size * .65) return null
+        val marked = ink.indices.filter { ink[it] }
+        val edge = maxOf(3, size / 5)
+        val x0 = (marked.minOf { it % w } - edge).coerceAtLeast(0); val y0 = (marked.minOf { it / w } - edge).coerceAtLeast(0)
+        val x1 = (marked.maxOf { it % w } + edge + 1).coerceAtMost(w); val y1 = (marked.maxOf { it / w } + edge + 1).coerceAtMost(h)
+        val cw = x1 - x0; val ch = y1 - y0
+        if (allLines.any { it !in lines && it.left < left + x1 && it.right > left + x0 && it.top < top + y1 && it.bottom > top + y0 }) return null
+        val mask = BooleanArray(cw * ch) { ink[(it / cw + y0) * w + it % cw + x0] }
+        return BubbleRegion(left + x0, top + y0, PixelMask(cw, ch, BooleanArray(cw * ch) { true }), mask, background,
+            BackgroundSurface(left, top, w, h, List(4) { background }),
+            textColor = if (luminance(target) > luminance(background)) Color.WHITE else Color.BLACK)
+    }
 
     /** Uniform, high-contrast lettering over artwork. Ambiguous components need a manual mask. */
     fun selectArtwork(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines): BubbleRegion? {
@@ -83,7 +161,7 @@ object TextRegionRepair {
         val dominant = bins.indices.maxBy { bins[it] }
         if (bins[dominant] < maxOf(12, textArea / 45)) return null
         val target = Color.rgb(dominant / 64 * 32 + 16, dominant / 8 % 8 * 32 + 16, dominant % 8 * 32 + 16)
-        val raw = BooleanArray(pixels.size) { abs(contrast[it]) > 30 && distance(pixels[it], target) <= 30 }
+        val raw = BooleanArray(pixels.size) { inText(left + it % w, top + it / w) && distance(pixels[it], target) <= 40 }
         val visited = BooleanArray(raw.size); val queue = IntArray(raw.size)
         val mask = BooleanArray(raw.size); var components = 0; var kept = 0
         for (start in raw.indices) if (raw[start] && !visited[start]) {
@@ -141,7 +219,7 @@ object TextRegionRepair {
         if (allLines.any { it !in lines && it.left < right && it.right > left && it.top < bottom && it.bottom > top }) return null
         val pixels = IntArray(w * h)
         source.getPixels(pixels, 0, w, left, top, w, h)
-        fun inText(x: Int, y: Int) = lines.any { x in (it.left - halo) until (it.right + halo) && y in (it.top - halo) until (it.bottom + halo) }
+        fun inText(x: Int, y: Int) = lines.any { x in (it.left - maxOf(halo, letterHeight / 2)) until (it.right + maxOf(halo, letterHeight / 2)) && y in (it.top - halo) until (it.bottom + halo) }
         // Evenly spaced samples keep this independent of page height and device resolution.
         val step = maxOf(1, maxOf(w, h) / 100)
         val samples = mutableListOf<Sample>()
@@ -226,7 +304,7 @@ object TextRegionRepair {
             fun c(channel: (Int) -> Int) = (channel(a) * (1 - t) + channel(b) * t).roundToInt()
             return Color.rgb(c(Color::red), c(Color::green), c(Color::blue))
         }
-        fun inText(x: Int, y: Int) = lines.any { x in (it.left - halo) until (it.right + halo) && y in (it.top - halo) until (it.bottom + halo) }
+        fun inText(x: Int, y: Int) = lines.any { x in (it.left - maxOf(halo, letterHeight / 2)) until (it.right + maxOf(halo, letterHeight / 2)) && y in (it.top - halo) until (it.bottom + halo) }
         val raw = BooleanArray(w * h); var outside = 0; var backgroundCount = 0; var textCount = 0
         var darker = 0L; var lighter = 0L
         for (i in pixels.indices) {

@@ -131,6 +131,31 @@ class ReadingPipelineTest {
         } finally { source.recycle() }
     }
 
+    @Test fun oldCleanupIsRebuiltWithItsSavedTranslationAndManualCleanupStaysLocked() = runBlocking {
+        val (source, lines) = fixture()
+        val directory = File(context.cacheDir, "cleanup-upgrade-" + UUID.randomUUID())
+        val store = LocalBookStore(context,directory,File(directory,"stage")); val profiles = Profiles()
+        val ocr = object : OcrService {
+            override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript) = error("Page OCR expected")
+            override suspend fun lines(source: Bitmap, script: OcrScript) = lines
+        }
+        try {
+            val book = store.addBitmap("Upgrade cleanup",source)
+            val regions = AutoBubbleDetector.detect(source,lines).flatMap { it.bubbles }.map { it.region }
+            val legacy = BubbleEdit(region=regions[0].copy(eraseMask=BooleanArray(regions[0].eraseMask.size)),japanese="Saved wording",margin=3,languageTag="en")
+            val manual = BubbleEdit(region=regions[1],japanese="My correction",margin=3,languageTag="en",cleanupLocked=true)
+            store.saveEdit(book.id,source,legacy);store.saveEdit(book.id,source,manual)
+            PageTranslationPipeline(store,ocr,profiles,TranslationService { _,_,_->error("Saved translations must be reused") })
+                .prepare(store.open(book),TranslationSettings(profiles.profile.id,"en",OcrScript.LATIN),{true},{},{})
+            val edits=store.open(book).edits
+            assertEquals("Saved wording",edits.single { it.id==legacy.id }.japanese)
+            assertEquals(5,edits.single { it.id==legacy.id }.cleanupVersion)
+            assertTrue(edits.single { it.id==legacy.id }.region.eraseMask.any { it })
+            assertEquals(0,edits.single { it.id==manual.id }.cleanupVersion)
+            assertTrue(edits.single { it.id==manual.id }.cleanupLocked)
+        } finally { directory.deleteRecursively();source.recycle() }
+    }
+
     @Test fun recognizedTextIsTranslatedAndPersistedEvenWhenCleanupCannotProduceASwap() = runBlocking {
         val source = Bitmap.createBitmap(160, 120, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
         val directory = File(context.cacheDir, "unresolved-" + UUID.randomUUID())

@@ -112,6 +112,12 @@ class ProviderTest {
         assertTrue(runCatching { TranslationClient.parse(ProviderKind.OPENAI, JSONObject().put("choices", JSONArray().put(unsupported)).toString()) }.isFailure)
     }
 
+    @Test fun accidentalLiteralNewlinesBecomeLineSeparatorsWithoutChangingDialogue() {
+        assertEquals("お願いします、\n私に力を。", TranslationClient.parse(ProviderKind.OPENAI, answer("お願いします、\\n私に力を。")))
+        assertEquals("First\nSecond", TranslationClient.parse(ProviderKind.OPENAI, answer("First\\r\\nSecond")))
+        assertEquals("First\nSecond", TranslationClient.parse(ProviderKind.OPENAI, answer("First\nSecond")))
+    }
+
     @Test fun batchBodiesContainOnlyTextAndIdsForEveryProvider() {
         for (kind in ProviderKind.entries) {
             val request = TranslationClient.batchRequest(ProviderSecret(profile(kind), testKey),

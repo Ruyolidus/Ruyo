@@ -28,6 +28,7 @@ import java.io.File
 class ComicRegressionTest {
     @Test fun paleDialogueAndLetteredEffect() = checkPage("pale-dialogue", listOf("didyouhave", "funtoday", "giggle"))
     @Test fun outlinedNarration() = checkPage("outlined-caption", listOf("normally", "justwalkedpast", "secondglance"))
+    @Test fun survivingEnglishCommentRows() = checkPage("page-comments", listOf("whatawasteoftime", "thesmartonesquitfirst"))
     @Test fun blueCaption() = checkPage("blue-caption", listOf("battleagainstevil", "darkmages", "gamblersinstinct", "chanceofwinning"))
     @Test fun joinedDialogueAndUnenclosedText() = checkPage("joined-dialogue", listOf("icameto", "father", "ordered", "thisplace", "war", "dontletanyone", "approach"))
 
@@ -44,7 +45,7 @@ class ComicRegressionTest {
             val ocr = BubbleOcr(context)
             val started = System.nanoTime()
             val lines = withTimeout(120_000) { ocr.lines(source, OcrScript.LATIN) }
-            fun json(line: OcrLine) = JSONObject().put("text", line.text).put("confidence", line.confidence).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
+            fun json(line: OcrLine) = JSONObject().put("text", line.text).put("confidence", line.confidence).put("angle", line.angle).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
             report.put("ocr", JSONArray().apply { lines.forEach { put(json(it)) } })
             report.put("ocrMilliseconds", (System.nanoTime() - started) / 1_000_000)
             if (name == "pale-dialogue") {
