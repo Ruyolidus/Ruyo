@@ -1,5 +1,6 @@
 package com.ruyo.ai
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
@@ -21,7 +22,7 @@ import java.util.concurrent.Executor
 enum class OcrScript(val label: String) {
     LATIN("Latin (English, French…)"), JAPANESE("Japanese"), CHINESE("Chinese"), KOREAN("Korean"), DEVANAGARI("Devanagari (Hindi…)")
 }
-data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int) {
+data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f) {
     val x get() = (left + right) / 2
     val y get() = (top + bottom) / 2
 }
@@ -32,7 +33,9 @@ fun interface OcrService {
 }
 
 /** Own the input copy until ML Kit's native task finishes, including after cancellation. */
-class BubbleOcr : OcrService {
+class BubbleOcr(context: Context? = null) : OcrService {
+    private val app = context?.applicationContext
+    private val detector by lazy { app?.let(::LearnedTextDetector) }
     private val gate = Mutex()
     override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript): String {
         val original = process(script, { crop(source, region) }) { it.text.trim() }
@@ -57,14 +60,47 @@ class BubbleOcr : OcrService {
                     text.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { r ->
                         if (line.text.isBlank() || r.width() <= 0 || r.height() <= 0) null
                         else OcrLine(line.text.trim(), (r.left + tile.left).coerceAtLeast(0), (r.top + tile.top).coerceAtLeast(0),
-                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height))
+                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence)
                     } }
                 }
                 OcrTiles.merge(found, result)
                 require(found.size <= 300) { "This image has too many text lines. Tap individual text areas to edit them." }
             }
+            val model = detector
+            if (model != null) {
+                currentCoroutineContext().ensureActive()
+                val tileImage = Bitmap.createBitmap(source, tile.left, tile.top, tile.width(), tile.height())
+                val boxes = try { model.detect(tileImage) } finally { if (tileImage !== source) tileImage.recycle() }
+                for (local in boxes) {
+                    currentCoroutineContext().ensureActive()
+                    val box = Rect(local).apply { offset(tile.left, tile.top) }
+                    val alreadyRead = found.any { line -> line.confidence >= .94f && box.contains(line.x, line.y) &&
+                        line.right - line.left >= box.width() * .60f && line.bottom - line.top >= box.height() * .35f }
+                    if (alreadyRead) continue
+                    for (contrast in listOf(false, true)) OcrTiles.merge(found, recognizeBox(source, box, script, contrast))
+                    require(found.size <= 300) { "This image has too many separate text lines." }
+                }
+            }
         }
         return found.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
+    }
+
+    private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean): List<OcrLine> {
+        val scale = (96f / rect.height()).coerceIn(1f, 3f)
+        val w = (rect.width() * scale).toInt(); val h = (rect.height() * scale).toInt()
+        return process(script, {
+            Bitmap.createBitmap(w + 32, h + 32, Bitmap.Config.ARGB_8888).also { bitmap ->
+                bitmap.eraseColor(Color.WHITE)
+                android.graphics.Canvas(bitmap).drawBitmap(source, rect, Rect(16, 16, w + 16, h + 16), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                if (contrast) OcrTiles.contrast(bitmap)
+            }
+        }) { result -> result.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { bounds ->
+            val left = (rect.left + (bounds.left - 16) * rect.width().toFloat() / w).toInt().coerceIn(0, source.width)
+            val top = (rect.top + (bounds.top - 16) * rect.height().toFloat() / h).toInt().coerceIn(0, source.height)
+            val right = (rect.left + (bounds.right - 16) * rect.width().toFloat() / w).toInt().coerceIn(0, source.width)
+            val bottom = (rect.top + (bounds.bottom - 16) * rect.height().toFloat() / h).toInt().coerceIn(0, source.height)
+            if (line.text.isBlank() || right <= left || bottom <= top) null else OcrLine(line.text.trim(), left, top, right, bottom, line.confidence)
+        } } }
     }
 
     private suspend fun <T> process(script: OcrScript, input: () -> Bitmap, result: (Text) -> T): T {
@@ -135,7 +171,8 @@ internal object OcrTiles {
             else {
                 val other = existing[duplicate]
                 // A full line from the overlap can replace a fragment at a tile boundary.
-                if (line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) existing[duplicate] = line
+                if ((line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) ||
+                    (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) existing[duplicate] = line
             }
         }
     }

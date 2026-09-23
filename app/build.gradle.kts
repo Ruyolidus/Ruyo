@@ -53,6 +53,7 @@ kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.09.01")
     implementation(composeBom)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
     implementation("com.google.mlkit:text-recognition:16.0.1")
     implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
     implementation("com.google.mlkit:text-recognition-chinese:16.0.1")

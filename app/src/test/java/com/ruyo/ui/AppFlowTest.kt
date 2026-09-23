@@ -268,7 +268,6 @@ class AppFlowTest {
         compose.onNodeWithTag("book-${book.id}").performClick()
         awaitTag("imported-page")
         compose.onNodeWithContentDescription("Edit bubbles").performClick()
-        compose.onNodeWithTag("draw-text-area").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput {
             down(Offset(width * .25f, height * .20f)); advanceEventTime(700)
             moveTo(Offset(width * .75f, height * .60f)); up()
@@ -566,7 +565,7 @@ class AppFlowTest {
         awaitState { !model.preparationRunning && model.preparationReports.size == 2 }
         assertNull(model.preparationError); assertEquals(3, calls)
         val book = model.chapter!!
-        assertEquals(2, LocalBookStore(context).preparation(book, "cleanup-v3:ja:LATIN").size)
+        assertEquals(2, LocalBookStore(context).preparation(book, "text-v4:ja:LATIN").size)
         assertTrue(book.pages.all { store.openPage(book, it).edits.size == 1 })
         compose.onNodeWithTag("read-prepared-chapter").performClick()
         awaitTag("book-reader"); awaitState { !model.busy }

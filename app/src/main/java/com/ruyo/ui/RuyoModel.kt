@@ -35,7 +35,7 @@ data class ImportProgress(val done: Int, val total: Int)
 
 class RuyoModel @JvmOverloads constructor(application: Application,
     private val profileStore: ProfileStore = EncryptedProfileStore(application),
-    private val ocrService: OcrService = BubbleOcr(),
+    private val ocrService: OcrService = BubbleOcr(application),
     private val translationService: TranslationService = TranslationClient(),
     private val webSessionFactory: (Application, WebChapter, Map<String, String>, String) -> WebReadingSession = { app, source, cookies, agent -> WebReadingSession(app, source, cookies, agent) },
     private val explanationService: ExplanationService = ExplanationClient(),
@@ -51,7 +51,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var preparationReports by mutableStateOf<Map<String, PagePreparation>>(emptyMap()); private set
     private var preparationJob: Job? = null
     private var prepareAfterTask = false
-    private val preparationKey get() = "cleanup-v3:" + targetLanguage + ":" + ocrScript.name
+    private val preparationKey get() = "text-v4:" + targetLanguage + ":" + ocrScript.name
     fun seriesFor(bookId: String) = series.firstOrNull { bookId in it.chapters }
     fun orderedChapters(seriesId: String): List<LocalBook> = series.firstOrNull { it.id == seriesId }?.chapters.orEmpty().mapNotNull { id -> books.firstOrNull { it.id == id } }
     fun neighbor(delta: Int): LocalBook? {
@@ -175,7 +175,6 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var ready by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null)
     var selecting by mutableStateOf(false)
-    var drawingArea by mutableStateOf(false)
     var selectionError by mutableStateOf<String?>(null); private set
     var japanese by mutableStateOf(true)
     var webHostActive by mutableStateOf(false); private set
@@ -459,7 +458,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         if (w < 16 || h < 16 || w.toLong() * h > 900_000) { selectionError = "Draw an area around one text block, with a little space on every side."; return@task }
         val region = BubbleRegion(x, y, PixelMask(w, h, BooleanArray(w * h) { true }), BooleanArray(w * h), android.graphics.Color.WHITE, inpaint = true)
         if (book.edits.any { it.region.overlaps(region) }) { selectionError = "This area overlaps a saved translation. Open that translation to edit it, or draw a separate area."; return@task }
-        selectionError = null; areaSelection = null; drawingArea = false
+        selectionError = null; areaSelection = null
         openEditor(book, region)
     }
     private suspend fun selectBubbleInPage(book: OpenBook, x: Int, y: Int) {
@@ -478,7 +477,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                     } }?.let { TextRegionRepair.select(book.original, it, lines) ?: TextRegionRepair.selectArtwork(book.original, it, lines) }
                 }
                 if (fallback == null || book.edits.any { it.region.overlaps(fallback) }) {
-                    selectionError = "Automatic selection could not isolate this text. Choose Draw area, hold and drag around the lettering, then brush the letters to repair them."
+                    selectionError = "Automatic recognition could not isolate this text. Hold and drag around it to correct the area."
                     return
                 }
                 fallback
@@ -528,7 +527,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         openEditor(book, selected)
         message = if (parts.getOrThrow().size > 1) "Areas saved. Tap each part in the reader to edit it independently." else "Using one text area"
     }
-    fun toggleSelection() { pauseScrolling(); selectionError = null; selecting = !selecting; drawingArea = false }
+    fun toggleSelection() { pauseScrolling(); selectionError = null; selecting = !selecting }
     fun changeCleanup(inpaint: Boolean) { updateLettering { it.copy(region = it.region.copy(inpaint = inpaint)) } }
     fun changeTextColor(light: Boolean) { updateLettering { it.copy(region = it.region.copy(textColor = if (light) android.graphics.Color.WHITE else android.graphics.Color.BLACK)) } }
     fun growCleanup() {
@@ -736,7 +735,9 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private fun startAi(recognize: Boolean, recognizeFirst: Boolean = false) {
         if (busy || aiStatus != null) return
         val current = draft ?: return
-        val source = opened?.original ?: return
+        val translationPage = opened ?: return
+        val translationStore = editorStore
+        val source = translationPage.original
         val profileId = activeProfileId
         if (!recognize && (profileId == null || activeProfile == null)) { aiError = "Add or select a provider profile first."; return }
         if (!recognize && !recognizeFirst && current.sourceText.isBlank()) { aiError = "Recognize or enter the original text first."; return }
@@ -746,6 +747,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         aiOperation = viewModelScope.launch {
             try {
                 var input = current.sourceText
+                var cacheKey: String? = null
                 if (!recognize && recognizeFirst && input.isBlank()) {
                     input = withContext(Dispatchers.Default) { ocrService.recognize(source, current.edit.region, script) }
                     require(input.isNotBlank() && input.length <= 2000) { "This area contains too much text. Split it into smaller areas." }
@@ -758,7 +760,9 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                 val result = if (recognize) withContext(Dispatchers.Default) { ocrService.recognize(source, current.edit.region, script) }
                 else {
                     val secret = withContext(Dispatchers.IO) { profileStore.get(requireNotNull(profileId)) }
-                    translationService.translate(secret, input, current.edit.languageTag)
+                    cacheKey = translationCacheKey(secret.profile, current.edit.languageTag, input)
+                    withContext(Dispatchers.IO) { translationStore.textTranslations(translationPage)[cacheKey] }
+                        ?: translationService.translate(secret, input, current.edit.languageTag)
                 }
                 ensureActive()
                 val latest = draft
@@ -768,6 +772,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                     draft = latest.copy(sourceText = result)
                 } else {
                     require(result.isNotBlank() && result.length <= 512) { "The translation exceeds 512 characters. It has not been shortened or applied." }
+                    cacheKey?.let { key -> withContext(Dispatchers.IO) { translationStore.saveTextTranslation(translationPage, key, result) } }
                     draft = latest.copy(edit = latest.edit.copy(japanese = result), preview = null, previewError = null, revision = latest.revision + 1)
                     preview()
                 }

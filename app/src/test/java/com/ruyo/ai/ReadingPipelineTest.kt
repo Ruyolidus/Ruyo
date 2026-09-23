@@ -131,6 +131,32 @@ class ReadingPipelineTest {
         } finally { source.recycle() }
     }
 
+    @Test fun recognizedTextIsTranslatedAndPersistedEvenWhenCleanupCannotProduceASwap() = runBlocking {
+        val source = Bitmap.createBitmap(160, 120, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
+        val directory = File(context.cacheDir, "unresolved-" + UUID.randomUUID())
+        val store = LocalBookStore(context, directory, File(directory, "stage")); val profiles = Profiles()
+        var calls = 0
+        val ocr = object : OcrService {
+            override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript) = "Wait for me."
+            override suspend fun lines(source: Bitmap, script: OcrScript) = listOf(OcrLine("Wait for me.", 30, 40, 130, 62))
+        }
+        val translation = TranslationService { _, _, _ -> calls++; "待って。" }
+        try {
+            val book = store.addBitmap("Unresolved cleanup", source)
+            val settings = TranslationSettings(profiles.profile.id, "ja", OcrScript.LATIN)
+            val first = requireNotNull(PageTranslationPipeline(store, ocr, profiles, translation).prepare(store.open(book), settings, { true }, {}, {}))
+            assertEquals(1, first.detected); assertEquals(1, first.translated)
+            assertEquals(0, first.rendered); assertEquals(1, first.cleanupFailed); assertTrue(first.needsReview)
+            assertTrue(store.open(book).edits.isEmpty()); assertTrue(source.sameAs(store.open(book).displayed))
+            store.recordPreparation(book, "fixture", book.pages.first().id, first)
+            assertEquals(first, store.preparation(book, "fixture").values.single())
+            val reopened = LocalBookStore(context, directory, File(directory, "stage"))
+            PageTranslationPipeline(reopened, ocr, profiles, translation).prepare(reopened.open(book), settings, { true }, {}, {})
+            assertEquals("Retrying cleanup must not make another paid translation call", 1, calls)
+            assertEquals("待って。", reopened.textTranslations(reopened.open(book)).values.single())
+        } finally { directory.deleteRecursively(); source.recycle() }
+    }
+
     @Test fun webImagesLoadOnceAndStayOutOfTheLibrary() = runBlocking {
         val (bitmap, _) = fixture()
         val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()

@@ -27,7 +27,7 @@ data class LocalBook(
 )
 data class OpenBook(val book: LocalBook, val original: Bitmap, val displayed: Bitmap, val edits: List<BubbleEdit>, val page: LocalPage = book.pages.first())
 data class StagedPage(val page: LocalPage, val folder: File)
-data class PagePreparation(val message: String, val needsReview: Boolean)
+data class PagePreparation(val message: String, val needsReview: Boolean, val detected: Int = 0, val translated: Int = 0, val rendered: Int = 0, val cleanupFailed: Int = 0, val fitFailed: Int = 0)
 data class ReadingPosition(val pageId: String, val offset: Int)
 data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null, val languageTag: String = "ja")
 
@@ -182,6 +182,23 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
     }
     @Synchronized fun removeBook(bookId: String) { check(folder(bookId).deleteRecursively()) { "The chapter could not be removed." } }
 
+    @Synchronized fun textTranslations(page: OpenBook): Map<String, String> {
+        val file = File(pageFolder(page.book, page.page), "text-translations.json")
+        if (!file.exists()) return emptyMap()
+        require(file.length() <= 1024 * 1024) { "The page translation cache is too large." }
+        val data = JSONObject(read(file)); require(data.length() <= 300)
+        return data.keys().asSequence().associateWith { key ->
+            require(key.matches(Regex("[a-f0-9]{64}")))
+            data.getString(key).also { require(it.isNotBlank() && it.length <= 512) }
+        }
+    }
+    @Synchronized fun saveTextTranslation(page: OpenBook, key: String, text: String) {
+        require(key.matches(Regex("[a-f0-9]{64}")) && text.isNotBlank() && text.length <= 512)
+        val values = textTranslations(page).toMutableMap().apply { put(key, text) }
+        while (values.size > 300) values.remove(values.keys.first())
+        write(File(pageFolder(page.book, page.page), "text-translations.json"), JSONObject(values as Map<*, *>).toString())
+    }
+
     @Synchronized fun preparation(book: LocalBook, key: String): Map<String, PagePreparation> {
         val file = File(folder(book.id), "preparation.json")
         if (!file.exists()) return emptyMap()
@@ -189,14 +206,15 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
         if (obj.optString("key") != key) return emptyMap()
         val pages = obj.getJSONObject("pages")
         return book.pages.mapNotNull { page -> pages.optJSONObject(page.id)?.let {
-            page.id to PagePreparation(it.getString("message"), it.getBoolean("review"))
+            page.id to PagePreparation(it.getString("message"), it.getBoolean("review"), it.optInt("detected"), it.optInt("translated"), it.optInt("rendered"), it.optInt("cleanupFailed"), it.optInt("fitFailed"))
         } }.toMap()
     }
     @Synchronized fun recordPreparation(book: LocalBook, key: String, pageId: String, value: PagePreparation) {
         require(book.pages.any { it.id == pageId })
         val values = preparation(book, key) + (pageId to value)
         write(File(folder(book.id), "preparation.json"), JSONObject().put("key", key).put("pages", JSONObject().apply {
-            values.forEach { (id, report) -> put(id, JSONObject().put("message", report.message).put("review", report.needsReview)) }
+            values.forEach { (id, report) -> put(id, JSONObject().put("message", report.message).put("review", report.needsReview)
+                .put("detected", report.detected).put("translated", report.translated).put("rendered", report.rendered).put("cleanupFailed", report.cleanupFailed).put("fitFailed", report.fitFailed)) }
         }).toString())
     }
     private fun invalidatePreparation(bookId: String, pageId: String) {

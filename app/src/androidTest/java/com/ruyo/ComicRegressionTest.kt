@@ -41,10 +41,10 @@ class ComicRegressionTest {
         screenshot.recycle()
         val report = JSONObject().put("fixture", name).put("expected", JSONArray(expected))
         try {
-            val ocr = BubbleOcr()
+            val ocr = BubbleOcr(context)
             val started = System.nanoTime()
             val lines = withTimeout(120_000) { ocr.lines(source, OcrScript.LATIN) }
-            fun json(line: OcrLine) = JSONObject().put("text", line.text).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
+            fun json(line: OcrLine) = JSONObject().put("text", line.text).put("confidence", line.confidence).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
             report.put("ocr", JSONArray().apply { lines.forEach { put(json(it)) } })
             report.put("ocrMilliseconds", (System.nanoTime() - started) / 1_000_000)
             if (name == "pale-dialogue") {
@@ -71,7 +71,20 @@ class ComicRegressionTest {
             val missingCleanup = expected.filter { it in recognized && it !in accepted }
             report.put("missingOcr", JSONArray(missingOcr)).put("missingCleanup", JSONArray(missingCleanup))
             File(directory, "$name.json").writeText(report.toString(2))
-            assertTrue("$name missed OCR: $missingOcr; cleanup: $missingCleanup; fit failures: $failed", missingOcr.isEmpty() && missingCleanup.isEmpty() && failed.length() == 0)
-        } finally { File(directory, "$name.json").writeText(report.toString(2)); source.recycle() }
+            assertTrue("$name missed OCR: $missingOcr; cleanup: $missingCleanup; fit failures: $failed; details: $report", missingOcr.isEmpty() && missingCleanup.isEmpty() && failed.length() == 0)
+        } finally {
+            File(directory, "$name.json").writeText(report.toString(2))
+            android.util.Log.i("RuyoRegression", report.toString())
+            if (android.os.Build.VERSION.SDK_INT >= 29) directory.listFiles().orEmpty().filter { it.name.startsWith(name) }.forEach { file ->
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, file.name)
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, if (file.extension == "png") "image/png" else "application/json")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/ruyo-diagnostics")
+                }
+                val uri = requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
+                context.contentResolver.openOutputStream(uri)!!.use { output -> file.inputStream().use { it.copyTo(output) } }
+            }
+            source.recycle()
+        }
     }
 }

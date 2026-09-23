@@ -83,11 +83,7 @@ internal fun BookReader(model: RuyoModel) {
             next = model.neighbor(1)?.let { next -> ({ model.openBook(next) }) })
         if (model.selecting) Surface(color = MaterialTheme.colorScheme.primaryContainer) {
             Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(selected = !model.drawingArea, onClick = { model.drawingArea = false }, label = { Text("Tap text") })
-                    FilterChip(selected = model.drawingArea, onClick = { model.drawingArea = true }, label = { Text("Draw area") }, modifier = Modifier.testTag("draw-text-area"))
-                }
-                Text(if (model.drawingArea) "Hold and drag around a text block. Leave a little space around the letters." else "Tap a bubble or caption. Use Draw area for text over artwork.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                Text("Tap text to adjust it. Hold and drag only to correct a missed area.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer)
                 model.selectionError?.let { Text(it, Modifier.padding(top = 8.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer) }
             }
         }
@@ -107,7 +103,7 @@ internal fun BookReader(model: RuyoModel) {
                         TextButton(onClick = { retry++ }) { Text("Retry", color = Color.White) }
                     }
                 } else ReaderPage(if (model.japanese && !model.selecting) data.displayed else data.original, "Page ${index + 1}", if (index == 0) "imported-page" else "imported-page-${page.id}",
-                    onArea = if (model.selecting && model.drawingArea && !model.busy) ({ l, t, r, b -> model.selectTextArea(l, t, r, b, data); Unit }) else null) { x, y ->
+                    onArea = if (model.selecting && !model.busy) ({ l, t, r, b -> model.selectTextArea(l, t, r, b, data); Unit }) else null) { x, y ->
                     if (!model.busy) {
                         if (model.selecting) model.selectBubble(x, y, data)
                         else if (model.japanese) data.edits.findLast { it.region.contains(x, y) }?.let { model.studyEdit(it, data) }
@@ -155,7 +151,7 @@ internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -
     }
     Box(Modifier.fillMaxWidth().aspectRatio(bitmap.width.toFloat() / bitmap.height).clipToBounds().testTag(tag)
         .onSizeChanged { viewport = it }
-        .transformable(transforms, canPan = { zoom > 1f })
+        .transformable(transforms, canPan = { zoom > 1f && currentArea == null })
         .pointerInput(bitmap.width, bitmap.height, zoom, pan, onArea != null) {
             if (onArea != null) {
                 detectDragGesturesAfterLongPress(
@@ -172,13 +168,13 @@ internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -
                         areaStart = null; areaEnd = null
                     },
                     onDrag = { change, _ -> change.consume(); areaEnd = change.position })
-            } else {
+            }
+        }.pointerInput(bitmap.width, bitmap.height, zoom, pan) {
             detectTapGestures { tap ->
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val imagePoint = (tap - center - pan) / zoom + center
                 val scale = size.width.toFloat() / bitmap.width
                 currentTap((imagePoint.x / scale).toInt(), (imagePoint.y / scale).toInt())
-            }
             }
         }.semantics { if (study != null) onClick("Study Japanese bubble") { study(); true } }) {
         Image(bitmap.asImageBitmap(), label, Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom; translationX = pan.x; translationY = pan.y }, contentScale = ContentScale.FillBounds)

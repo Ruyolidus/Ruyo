@@ -240,13 +240,13 @@ object TextRegionRepair {
             } else { backgroundCount++; if (delta > 16) outside++ }
         }
         val count = raw.count { it }
-        if (outside > maxOf(6, backgroundCount / 30) || count < 8 || count > textCount * .65 || lighter + darker < 4000) return null
+        if (outside > maxOf(6, backgroundCount / 30) || count < 8 || count > textCount * .95 || lighter + darker < 4000) return null
         val ink = BooleanArray(raw.size); val grow = (letterHeight / 9).coerceIn(2, 6)
         for (i in raw.indices) if (raw[i]) for (dy in -grow..grow) for (dx in -grow..grow) {
             val x = i % w + dx; val y = i / w + dy
             if (x in 2 until w - 2 && y in 2 until h - 2) ink[y * w + x] = true
         }
-        if (ink.count { it } > pixels.size * .60) return null
+        if (ink.count { it } > pixels.size * .80) return null
         val surface = BackgroundSurface(left, top, w, h,
             listOf(rows.first().first, rows.first().second, rows.last().first, rows.last().second), rows.flatMap { listOf(it.first, it.second) })
         return BubbleRegion(left, top, PixelMask(w, h, BooleanArray(w * h) { true }), ink, background(w / 2, h / 2), surface,

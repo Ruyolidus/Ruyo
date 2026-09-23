@@ -2,68 +2,65 @@ package com.ruyo.reader
 
 import android.graphics.Bitmap
 import android.graphics.Point
+import android.graphics.Rect
 import com.ruyo.ai.OcrLine
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 
 data class DetectedBubble(val region: BubbleRegion, val source: String, val needsReview: Boolean = false)
 data class DetectedGroup(val region: BubbleRegion, val centers: List<Point>, val bubbles: List<DetectedBubble>)
+data class TextArea(val lines: List<OcrLine>, val bounds: Rect, val source: String, val region: BubbleRegion?, val needsReview: Boolean)
 
-/** OCR locates dialogue; the same conservative selector owns cleanup and fitting. */
+/** Text is the inventory. A bubble outline can improve layout, but cannot remove text from that inventory. */
 object AutoBubbleDetector {
-    suspend fun detect(source: Bitmap, lines: List<OcrLine>, savedCenters: (BubbleRegion) -> List<Point>? = { null }): List<DetectedGroup> {
+    suspend fun analyze(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines,
+        savedCenters: (BubbleRegion) -> List<Point>? = { null }): List<TextArea> {
         require(lines.size <= 300) { "Too many text lines in one image." }
-        val parents = mutableListOf<BubbleRegion>()
         val valid = lines.filter { it.text.isNotBlank() && it.left >= 0 && it.top >= 0 && it.right <= source.width && it.bottom <= source.height && it.right > it.left && it.bottom > it.top }
-        for (line in valid) {
+        val accepted = mutableListOf<BubbleRegion>()
+        return TextRegionRepair.groups(valid).map { block ->
             currentCoroutineContext().ensureActive()
-            if (parents.any { it.contains(line.x, line.y) }) continue
-            if (parents.size == 40) break
-            val selected = BubbleSelector.select(source, line.x, line.y) as? SelectionResult.Selected ?: continue
-            if (parents.none { it.overlaps(selected.region) }) parents += selected.region
+            val bounds = Rect(block.minOf { it.left }, block.minOf { it.top }, block.maxOf { it.right }, block.maxOf { it.bottom })
+            val smooth = TextRegionRepair.select(source, block, allLines)
+            var repair = smooth ?: TextRegionRepair.selectArtwork(source, block, allLines)
+            // Only a successful lettering mask proceeds to optional outline/layout detection.
+            if (repair != null && smooth != null) repair = roomForText(source, repair, block, allLines, savedCenters)
+            repair = repair?.takeUnless { region -> accepted.any { it.overlaps(region) } }
+            repair?.let { accepted += it }
+            TextArea(block, bounds, block.joinToString("\n") { it.text }, repair, smooth == null)
         }
-        val detected = parents.map { parent ->
-            currentCoroutineContext().ensureActive()
-            val centers = savedCenters(parent) ?: BubbleAreas.suggest(parent)
-            val parts = runCatching { BubbleAreas.split(parent, centers) }.getOrElse { emptyList() }
-            val bubbles = parts.mapNotNull { region ->
-                val assigned = valid.filter { region.contains(it.x, it.y) }.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
-                // Never erase a line that was divided between two parts or outside the cleanup area.
-                val whole = assigned.all { line ->
-                    region.contains(line.left, line.y) && region.contains(line.right - 1, line.y) &&
-                        region.contains(line.x, line.top) && region.contains(line.x, line.bottom - 1)
-                }
-                val text = assigned.joinToString("\n") { it.text }
-                val ink = region.eraseMask.count { it }
-                var uncovered = 0
-                for (i in region.eraseMask.indices) if (region.eraseMask[i]) {
-                    val x = region.left + i % region.width; val y = region.top + i / region.width
-                    if (assigned.none { line ->
-                        val halo = maxOf(3, (line.bottom - line.top) / 5)
-                        x in (line.left - halo)..(line.right + halo) && y in (line.top - halo)..(line.bottom + halo)
-                    }) uncovered++
-                }
-                // Missing OCR lines must not be erased along with recognized neighbors.
-                val covered = uncovered <= maxOf(6, ink / 50)
-                if (!covered || !whole || text.isBlank() || text.length > 2000 || region.eraseMask.none { it }) null
-                else DetectedBubble(TextRegionRepair.refine(source, region, assigned), text)
-            }
-            DetectedGroup(parent, centers, bubbles)
-        }.toMutableList()
-        val accepted = detected.flatMap { it.bubbles }.map { it.region }.toMutableList()
-        val missing = valid.filter { line -> accepted.none { it.contains(line.x, line.y) } }
-        for (block in TextRegionRepair.groups(missing)) {
-            currentCoroutineContext().ensureActive()
-            if (accepted.size >= 40) break
-            val smooth = TextRegionRepair.select(source, block, valid)
-            val region = smooth ?: TextRegionRepair.selectArtwork(source, block, valid) ?: continue
-            if (valid.any { it !in block && region.contains(it.x, it.y) }) continue
-            if (accepted.any { it.overlaps(region) }) continue
-            val text = block.joinToString("\n") { it.text }
-            if (text.length > 2000) continue
-            accepted += region
-            detected += DetectedGroup(region, listOf(Point(region.width / 2, region.height / 2)), listOf(DetectedBubble(region, text, needsReview = smooth == null)))
+    }
+
+    suspend fun detect(source: Bitmap, lines: List<OcrLine>, savedCenters: (BubbleRegion) -> List<Point>? = { null }): List<DetectedGroup> =
+        analyze(source, lines, savedCenters = savedCenters).mapNotNull { area -> area.region?.let { region ->
+            DetectedGroup(region, listOf(Point(region.width / 2, region.height / 2)), listOf(DetectedBubble(region, area.source, area.needsReview)))
+        } }
+
+    private fun roomForText(source: Bitmap, repair: BubbleRegion, block: List<OcrLine>, allLines: List<OcrLine>, savedCenters: (BubbleRegion) -> List<Point>?): BubbleRegion {
+        val letterHeight = block.maxOf { it.bottom - it.top }
+        val pad = (letterHeight * 4).coerceIn(48, 240)
+        val left = (repair.left - pad).coerceAtLeast(0); val top = (repair.top - pad).coerceAtLeast(0)
+        val right = (repair.left + repair.width + pad).coerceAtMost(source.width)
+        val bottom = (repair.top + repair.height + pad).coerceAtMost(source.height)
+        if ((right - left).toLong() * (bottom - top) > 650_000) return repair
+        val crop = Bitmap.createBitmap(source, left, top, right - left, bottom - top)
+        val selected = try { BubbleSelector.select(crop, block.first().x - left, block.first().y - top) as? SelectionResult.Selected }
+        finally { if (crop !== source) crop.recycle() }
+        val local = selected?.region ?: return repair
+        val parent = local.copy(left = local.left + left, top = local.top + top)
+        val centers = savedCenters(parent) ?: BubbleAreas.suggest(parent)
+        val part = runCatching { BubbleAreas.split(parent, centers) }.getOrNull()?.firstOrNull { region -> block.all { region.contains(it.x, it.y) } } ?: return repair
+        if (allLines.any { it !in block && part.contains(it.x, it.y) }) return repair
+        val ink = BooleanArray(part.width * part.height)
+        for (i in repair.eraseMask.indices) if (repair.eraseMask[i]) {
+            val x = repair.left + i % repair.width; val y = repair.top + i / repair.width
+            if (!part.contains(x, y)) return repair
+            ink[(y - part.top) * part.width + x - part.left] = true
         }
-        return detected.filter { it.bubbles.isNotEmpty() }
+        // Unknown source lettering must not become extra layout room for this translation.
+        val uncovered = part.eraseMask.indices.count { i -> part.eraseMask[i] && !ink[i] }
+        if (uncovered > maxOf(6, part.eraseMask.count { it } / 50)) return repair
+        return part.copy(eraseMask = ink, backgroundColor = repair.backgroundColor, backgroundSurface = repair.backgroundSurface,
+            textColor = repair.textColor, inpaint = repair.inpaint)
     }
 }

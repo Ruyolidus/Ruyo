@@ -62,7 +62,7 @@ backgrounds, missing OCR, and impossible fits preserve the original. OCR runs on
 overlapping working-image tiles with a contrast pass for outlined lettering.
 Shaded captions can use local repair, and a high-contrast artwork mask is available
 as a reviewable fallback. Complex detailed backgrounds can still leave artifacts.
-Manual Draw area and erase/restore brushes are available in the imported chapter's
+Manual area correction and erase/restore brushes are available in the imported chapter's
 editor. Only masked pixels are repaired; the layout rectangle is never a cover.
 A bounded fallback now handles tiny outline gaps by selecting a safely inset
 interior, without painting over borders or accepting the whole page background.

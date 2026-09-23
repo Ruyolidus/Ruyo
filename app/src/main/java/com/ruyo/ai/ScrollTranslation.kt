@@ -82,7 +82,6 @@ class PageTranslationPipeline(
     private val lineCache = object : java.util.LinkedHashMap<String, List<OcrLine>>(4, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, List<OcrLine>>?) = size > 3
     }
-    private val replies = mutableMapOf<String, String>()
     suspend fun process(page: OpenBook, settings: TranslationSettings, keepGoing: () -> Boolean, status: (String) -> Unit,
         changed: suspend () -> Unit): String? = prepare(page, settings, keepGoing, status, changed)?.message
 
@@ -91,71 +90,79 @@ class PageTranslationPipeline(
         if (!keepGoing()) return null
         val sourceKey = page.book.id + ":" + page.page.id + ":" + settings.script.name
         val lines = lineCache[sourceKey] ?: run {
-            status("Recognizing dialogue on this device…")
+            status("Recognizing text on this device…")
             withContext(Dispatchers.Default) { ocr.lines(page.original, settings.script) }.also { lineCache[sourceKey] = it }
         }
-        val groups = withContext(Dispatchers.Default) { AutoBubbleDetector.detect(page.original, lines) { store.areaCenters(page, it) } }
+        val existing = page.edits.toMutableList()
+        val remaining = lines.filter { line -> existing.none { it.region.contains(line.x, line.y) } }
+        val candidates = withContext(Dispatchers.Default) { AutoBubbleDetector.analyze(page.original, remaining, lines) { store.areaCenters(page, it) } }
         if (!keepGoing()) return null
         val secret = withContext(Dispatchers.IO) { profiles.get(settings.profileId) }
-        val existing = page.edits.toMutableList()
-        val candidates = mutableListOf<DetectedBubble>()
-        for (group in groups) {
-            currentCoroutineContext().ensureActive()
-            if (!keepGoing()) return null
-            if (group.centers.size > 1 && existing.none { it.region.overlaps(group.region) }) {
-                withContext(Dispatchers.IO) { store.saveAreas(page, group.region, group.centers) }
-            }
-            candidates += group.bubbles.filter { bubble -> existing.none { it.region.overlaps(bubble.region) } }
-        }
-        val pending = candidates.take((40 - existing.size).coerceAtLeast(0))
-        var skipped = candidates.size - pending.size; var count = 0; var offset = 0; var artworkRepairs = 0
-        fun key(bubble: DetectedBubble) = listOf(sourceKey, bubble.region.left, bubble.region.top, bubble.region.width, bubble.region.height,
-            secret.profile.id, secret.profile.baseUrl, secret.profile.model, settings.language, bubble.source).joinToString("|")
+        val cached = withContext(Dispatchers.IO) { store.textTranslations(page) }.toMutableMap()
+        val pending = candidates.filter { it.source.isNotBlank() && it.source.length <= 2000 }
+        var cleanupFailed = candidates.size - pending.size; var fitFailed = 0; var offset = 0; var artworkRepairs = 0
+        val alreadyRendered = existing.count { it.languageTag == settings.language }
+        var translated = alreadyRendered; var rendered = alreadyRendered
+        fun key(area: TextArea) = translationCacheKey(secret.profile, settings.language, area.source)
         while (offset < pending.size) {
             currentCoroutineContext().ensureActive()
             if (!keepGoing()) return null
-            val batch = mutableListOf<DetectedBubble>()
-            var characters = 0
+            val batch = mutableListOf<TextArea>(); var characters = 0
             while (offset < pending.size && batch.size < 4 && characters + pending[offset].source.length <= 6000) {
-                val bubble = pending[offset++]; batch += bubble; characters += bubble.source.length
+                val area = pending[offset++]; batch += area; characters += area.source.length
             }
-            val missing = batch.mapIndexedNotNull { i, bubble -> if (key(bubble) !in replies) SourceDialogue(i.toString(), bubble.source) else null }
+            val missing = batch.mapIndexedNotNull { i, area -> if (key(area) !in cached) SourceDialogue(i.toString(), area.source) else null }
+                .distinctBy { key(batch[it.id.toInt()]) }
             if (missing.isNotEmpty()) {
-                status("Translating " + missing.size + if (missing.size == 1) " bubble…" else " bubbles together…")
+                status("Translating " + missing.size + if (missing.size == 1) " text area…" else " text areas together…")
                 val result = translate.translateBatch(secret, missing, settings.language)
                 currentCoroutineContext().ensureActive()
                 require(result.keys == missing.map { it.id }.toSet() && result.values.all { it.isNotBlank() && it.length <= 512 }) {
-                    "The provider did not return every dialogue separately. The original is unchanged."
+                    "The provider did not return every text area separately. Completed work is saved."
                 }
-                missing.forEach { item -> replies[key(batch[item.id.toInt()])] = requireNotNull(result[item.id]) }
+                for (item in missing) {
+                    val cacheKey = key(batch[item.id.toInt()]); val text = requireNotNull(result[item.id])
+                    withContext(Dispatchers.IO) { store.saveTextTranslation(page, cacheKey, text) }
+                    cached[cacheKey] = text
+                }
             }
             var saved = false
-            for (bubble in batch) {
-                currentCoroutineContext().ensureActive()
-                val sourceHeight = withContext(Dispatchers.Default) { SourceLettering.estimateHeight(bubble.region) }
-                val edit = BubbleEdit(region = bubble.region, japanese = requireNotNull(replies[key(bubble)]),
-                    margin = maxOf(2, minOf(bubble.region.width, bubble.region.height) / 14), languageTag = settings.language,
-                    sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
+            for (area in batch) {
+                currentCoroutineContext().ensureActive(); translated++
+                val region = area.region
+                if (region == null || existing.size >= 40 || existing.any { it.region.overlaps(region) }) { cleanupFailed++; continue }
+                val sourceHeight = area.lines.map { (it.bottom - it.top).toFloat() }.sorted().let { it[it.size / 2] }
+                val edit = BubbleEdit(region = region, japanese = requireNotNull(cached[key(area)]),
+                    margin = maxOf(2, minOf(region.width, region.height) / 14), languageTag = settings.language,
+                    sourceLetterHeight = sourceHeight, matchSourceSize = true)
                 val fits = withContext(Dispatchers.Default) {
                     BubbleEditRenderer.preview(page.original, edit).fold(onSuccess = { preview ->
                         preview.crop.recycle(); preview.fit.ink.recycle(); true
                     }, onFailure = { false })
                 }
-                if (!fits) { skipped++; continue }
+                if (!fits) { fitFailed++; continue }
                 currentCoroutineContext().ensureActive()
                 withContext(Dispatchers.IO) { store.saveEdit(page.book.id, page.original, edit, page.page.id) }
-                existing += edit; count++; if (bubble.needsReview) artworkRepairs++; saved = true
+                existing += edit; rendered++; if (area.needsReview) artworkRepairs++; saved = true
             }
             if (saved) changed()
         }
         val uncovered = lines.count { line -> existing.none { it.languageTag == settings.language && it.region.contains(line.x, line.y) } }
-        val review = skipped > 0 || uncovered > 0 || artworkRepairs > 0
+        val review = lines.isEmpty() || cleanupFailed > 0 || fitFailed > 0 || uncovered > 0 || artworkRepairs > 0
         val note = when {
-            lines.isEmpty() -> "No dialogue detected. Check the original page."
-            skipped > 0 || uncovered > 0 -> "Some lettering needs review; unsupported areas keep their original pixels."
-            artworkRepairs > 0 -> "Text over artwork was repaired. Check the result against Original."
-            else -> "Detected dialogue is ready."
+            lines.isEmpty() -> "No text recognized. Check the original page."
+            cleanupFailed > 0 || fitFailed > 0 -> "$rendered text areas swapped. $cleanupFailed need cleanup; $fitFailed could not fit. Their translations are saved."
+            uncovered > 0 -> "$rendered text areas swapped. Some recognized text is still unchanged."
+            artworkRepairs > 0 -> "$rendered text areas swapped, including $artworkRepairs artwork repairs to review."
+            else -> "$rendered text areas swapped."
         }
-        return PagePreparation(note, review)
+        return PagePreparation(note, review, alreadyRendered + candidates.size, translated, rendered, cleanupFailed, fitFailed)
     }
+}
+
+/** Per-page cache identity excludes credentials and survives engine/cleanup changes. */
+internal fun translationCacheKey(profile: ProviderProfile, language: String, source: String): String {
+    val normalized = source.trim().replace(Regex("\\s+"), " ")
+    val data = org.json.JSONArray(listOf(profile.kind.name, profile.baseUrl, profile.model, language, normalized)).toString()
+    return java.security.MessageDigest.getInstance("SHA-256").digest(data.toByteArray()).joinToString("") { "%02x".format(it) }
 }

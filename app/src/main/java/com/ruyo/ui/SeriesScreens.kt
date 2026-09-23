@@ -88,7 +88,7 @@ internal fun PreparationScreen(model: RuyoModel) {
                 Text("Target: " + TextLanguages.label(model.targetLanguage), Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall)
                 TextButton(onClick = model::editProfiles, enabled = !model.preparationRunning) { Text(model.activeProfile?.name ?: "Choose AI provider") }
                 Text("Keep Ruyo open while preparing. You can pause and resume; completed translations are saved. Original pages are always available.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (review > 0) Text("$review pages have lettering that needs review. Artwork, gradients, or undetected text can remain in the original language.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall)
+                if (review > 0) Text("$review pages still need review. Each page below reports completed swaps and remaining cleanup or fitting failures.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall)
             }
             itemsIndexed(book.pages, key = { _, p -> p.id }) { index, page ->
                 val report = model.preparationReports[page.id]

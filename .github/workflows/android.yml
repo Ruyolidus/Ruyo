@@ -34,6 +34,8 @@ jobs:
           packages: ''
       - name: Install Android SDK packages
         run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+      - name: Fetch and verify offline text detector
+        run: python3 scripts/fetch-ocr-model.py
       - name: Test website image discovery
         run: node scripts/test-web-discovery.mjs
       - name: Test, lint, and assemble
@@ -97,7 +99,7 @@ jobs:
           Original/Translated and series Previous/Next stay visible while reading.
           Overlapping OCR and contrast passes improve outlined-text recognition.
           Shaded captions and high-contrast art lettering use masked local repair;
-          artwork results need review. Draw area and brush controls handle manual cleanup.
+          artwork results need review. Hold-and-drag and brush controls allow corrections.
           Tap translated dialogue for a short explanation, expandable reading help,
           and a quick choice question.
           Add profiles in Settings > Manage AI providers. Keys stay encrypted on-device.
@@ -135,6 +137,8 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Fetch and verify offline text detector
+        run: python3 scripts/fetch-ocr-model.py
       - name: Exercise real on-device services
         uses: reactivecircus/android-emulator-runner@v2
         with:

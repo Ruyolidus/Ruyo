@@ -19,6 +19,11 @@ class OcrTilesTest {
         OcrTiles.merge(found, listOf(OcrLine("Ready now", 38, 1489, 160, 1521), OcrLine("Ready now", 39, 1490, 161, 1522), OcrLine("Next", 500, 1500, 550, 1530)))
         assertEquals(listOf("Ready now", "Next"), found.map { it.text })
     }
+    @Test fun clearerReadingsReplaceLowConfidenceOcrWithoutDroppingNeighboringText() {
+        val found = mutableListOf(OcrLine("GAIVBLER", 20, 20, 180, 60, .4f), OcrLine("Next", 250, 20, 340, 60, .99f))
+        OcrTiles.merge(found, listOf(OcrLine("GAMBLER", 21, 20, 181, 60, .97f)))
+        assertEquals(listOf("GAMBLER", "Next"), found.map { it.text })
+    }
     @Test fun contrastPassKeepsDarkStrokesAndDropsSmoothBackgroundShading() {
         val bitmap = Bitmap.createBitmap(100, 90, Bitmap.Config.ARGB_8888)
         for (y in 0 until 90) for (x in 0 until 100) bitmap.setPixel(x, y, Color.rgb(180 + y / 2, 180 + y / 2, 180 + y / 2))

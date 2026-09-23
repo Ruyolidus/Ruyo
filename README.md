@@ -68,7 +68,7 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   and outlined lettering. Overlapping, original-scale tiles of the working image
   run raw and adaptive-contrast OCR passes; duplicate lines are merged locally.
 - High-contrast text over artwork can use a reviewable glyph mask and local pixel
-  reconstruction. The editor also has **Draw area**, erase/restore brushes,
+  reconstruction. The editor also has a hold-and-drag area correction, erase/restore brushes,
   **Repair shading and texture**, **Include outline**, and **Rebuild cleanup**.
   Only the lettering mask is repaired; no opaque rectangular cover is painted.
 - Bubble edits, masks, and entered text persist; originals stay intact. Reopen an
@@ -98,7 +98,7 @@ high-contrast artwork uses boundary-inward local repair.
 Ambiguous or missing OCR and impossible fits still preserve the original. Artwork
 repairs are marked for review. This is a bounded local pixel method, not neural
 reconstruction: large letters over faces, edges or detailed objects can leave artifacts.
-Use Draw area and the mask brushes when automatic selection cannot isolate text.
+Use hold-and-drag and the mask brushes when automatic selection cannot isolate text.
 
 The browser collects HTTPS image URLs as you browse, filters common comment/profile
 images, and retains previously seen chapter images. Extract them into an imported
@@ -188,6 +188,7 @@ Use JDK 17 and an Android SDK containing `platforms;android-36` and
 untracked `local.properties` file.
 
 ```sh
+python3 scripts/fetch-ocr-model.py
 node scripts/test-web-discovery.mjs
 ./gradlew :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
 ```
@@ -270,6 +271,25 @@ In 0.6.0, chapter preparation rechecks skipped regions with the new cleanup meth
 Existing edits remain intact. **Retry skipped text** retries review pages without
 retranslating their saved regions. For an existing translation with leftover outlines,
 open **Edit → Rebuild cleanup**, or use **Include outline** and preview again.
-For unselected text, choose **Edit bubbles → Draw area**, hold and drag around the
+For unselected text, choose **Edit bubbles**, hold and drag around the
 text, then brush its letters or rebuild its cleanup. A newly drawn empty mask cannot
 be saved as a translation. Check **Original text** if the OCR script is wrong.
+
+### Automatic text processing
+
+The page pipeline starts with recognized text blocks. Bubble outlines are optional
+layout guidance, searched only in bounded crops after a cleanup mask exists.
+The bundled PP-OCRv5 mobile detector locates text independently of closed balloons;
+ML Kit reads those crops locally and OCR variants merge using recognition confidence.
+The model is fetched with a pinned SHA-256 at build time and works offline in the app.
+
+Every recognized block receives a translation even when cleanup cannot produce a
+validated swap. Those text replies persist per page and are reused when cleanup is
+retried, including after reopening the app. Page reports distinguish saved
+translations, completed swaps, cleanup failures and fitting failures. A processed
+page does not mean every visible word has been recognized or successfully replaced.
+
+Four user-supplied screenshots live only in Android test assets. Device regressions
+check the actual pale dialogue, outlined caption, blue caption and joined balloons;
+cleanup previews and OCR diagnostics are exported in device-check artifacts.
+Fixed Japanese strings in these rendering tests are fixtures, not live AI translations.

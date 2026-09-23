@@ -10,3 +10,7 @@ local.properties
 *.aab
 *.jks
 *.keystore
+
+# Verified model downloaded by scripts/fetch-ocr-model.py at build time
+app/src/main/assets/ocr/*.onnx
+app/src/main/assets/ocr/*.tmp

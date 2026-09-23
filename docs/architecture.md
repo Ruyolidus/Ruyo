@@ -282,7 +282,7 @@ bounded gradient extrapolation. Unmasked pixels are unchanged. This is a local
 repair heuristic, not OpenCV Telea or a neural model; complex hidden artwork is
 not guaranteed to be reconstructed. The same text containment gate still applies.
 
-Manual Draw area opens a bounded rectangular layout with an empty cleanup mask.
+Manual area correction opens a bounded rectangular layout with an empty cleanup mask.
 Users brush the lettering or rebuild cleanup using OCR. Empty masks cannot preview
 as an inpainted replacement. Repair mode, text color and masks persist per edit;
 older saves default to their prior fill mode. Include outline grows only within
@@ -296,3 +296,14 @@ questions provide immediate feedback and optional hints. Duplicate options and
 answers absent from the choices are rejected. `lessons-v3` refreshes older cached
 lessons. Provider output remains unverified for factual accuracy; no paid-provider
 latency or pedagogical effectiveness claim follows from fixture tests.
+
+Text processing now inventories OCR blocks before cleanup (`text-v4`). The detector
+can return an unresolved region without dropping its source text. Translation replies
+are persisted by source text, target, endpoint and model, independently of rendered
+edits. Page preparation reports record detected/translated/rendered counts and
+separate cleanup/fitting failures. Existing saved edits remain protected.
+
+The Apache-2.0 PP-OCRv5 mobile detection model is bundled through a checksummed build
+step. ONNX Runtime executes it locally; its text-line regions guide additional ML Kit
+crop recognition. It is not a segmentation or inpainting model. Foreground masks
+and background repair remain separate operations and require their own validation.
