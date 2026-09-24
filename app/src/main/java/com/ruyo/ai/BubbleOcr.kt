@@ -73,6 +73,7 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                             (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence, slope(line))
                     } }
                 }
+                onCrop?.invoke(tile,if(contrast) -2 else -1,result)
                 OcrTiles.merge(found, result)
                 require(found.size <= 300) { "This image has too many text lines. Tap individual text areas to edit them." }
             }
