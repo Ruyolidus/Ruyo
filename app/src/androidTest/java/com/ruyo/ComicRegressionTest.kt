@@ -41,11 +41,13 @@ class ComicRegressionTest {
         val source = Bitmap.createBitmap(screenshot, 0, 284, screenshot.width, 1180)
         screenshot.recycle()
         val report = JSONObject().put("fixture", name).put("expected", JSONArray(expected))
+        val detectorBoxes = JSONArray()
+        val ocr = BubbleOcr(context) { boxes -> boxes.forEach { detectorBoxes.put(JSONArray(listOf(it.left,it.top,it.right,it.bottom))) } }
         try {
-            val ocr = BubbleOcr(context)
             val started = System.nanoTime()
             val lines = withTimeout(120_000) { ocr.lines(source, OcrScript.LATIN) }
             fun json(line: OcrLine) = JSONObject().put("text", line.text).put("confidence", line.confidence).put("angle", line.angle).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
+            report.put("detectorBoxes",detectorBoxes)
             report.put("ocr", JSONArray().apply { lines.forEach { put(json(it)) } })
             report.put("ocrMilliseconds", (System.nanoTime() - started) / 1_000_000)
             if (name == "pale-dialogue") {
@@ -85,7 +87,7 @@ class ComicRegressionTest {
                 val uri = requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
                 context.contentResolver.openOutputStream(uri)!!.use { output -> file.inputStream().use { it.copyTo(output) } }
             }
-            source.recycle()
+            ocr.close(); source.recycle()
         }
     }
 }

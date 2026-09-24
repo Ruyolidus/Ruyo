@@ -40,7 +40,7 @@ object TextRegionRepair {
                 val next = remaining.firstOrNull { line ->
                     val overlap = minOf(line.right, last.right) - maxOf(line.left, last.left)
                     val otherHeight = line.bottom - line.top
-                    line.top >= last.top + height * .30 && line.top - last.bottom <= height * .7 &&
+                    line.top >= last.top + height * .30 && line.top - last.bottom <= height * .55 &&
                         otherHeight in (height / 2)..(height * 2) && overlap >= minOf(line.right - line.left, last.right - last.left) * .5
                 } ?: break
                 group += next; remaining.remove(next)
@@ -85,7 +85,17 @@ object TextRegionRepair {
         val borderBins = IntArray(512); boundary.forEach { borderBins[bin(pixels[it])]++ }
         val borderBin = borderBins.indices.maxBy { borderBins[it] }
         val borderColor = Color.rgb(borderBin / 64 * 32 + 16, borderBin / 8 % 8 * 32 + 16, borderBin % 8 * 32 + 16)
-        fun borderPixel(i: Int) = foreground[i] && distance(pixels[i], borderColor) <= 48
+        fun borderPixel(i: Int): Boolean {
+            if (!foreground[i]) return false
+            val dr=Color.red(borderColor)-Color.red(background);val dg=Color.green(borderColor)-Color.green(background);val db=Color.blue(borderColor)-Color.blue(background)
+            val denominator=dr*dr+dg*dg+db*db
+            if (denominator == 0) return false
+            val c=pixels[i]
+            val alpha=((Color.red(c)-Color.red(background))*dr+(Color.green(c)-Color.green(background))*dg+(Color.blue(c)-Color.blue(background))*db).toDouble()/denominator
+            val mixed=Color.rgb((Color.red(background)+dr*alpha.coerceIn(0.0,1.0)).roundToInt(),
+                (Color.green(background)+dg*alpha.coerceIn(0.0,1.0)).roundToInt(),(Color.blue(background)+db*alpha.coerceIn(0.0,1.0)).roundToInt())
+            return distance(c,mixed)<=14
+        }
         var head = 0; var tail = 0
         for (i in boundary) if (borderPixel(i)) { protected[i] = true; queue[tail++] = i }
         fun adjacent(i: Int, visit: (Int) -> Unit) {
@@ -97,9 +107,16 @@ object TextRegionRepair {
         }
         while (head < tail) adjacent(queue[head++]) { j -> if (borderPixel(j) && !protected[j]) { protected[j] = true; queue[tail++] = j } }
         val textPixels = pixels.indices.count { inText(left + it % w, top + it / w) }
-        if (pixels.indices.count { protected[it] && inText(left + it % w, top + it / w) } > maxOf(8, textPixels / 25)) return null
-        // A border/art stroke connected to source lettering cannot be safely flattened.
-        if (pixels.indices.count { protected[it] && inText(left + it % w, top + it / w) && distance(pixels[it], target) <= 48 } > maxOf(6, bins[dominant] / 20)) return null
+        val entering = pixels.indices.count { protected[it] && inText(left + it % w, top + it / w) }
+        val crosses = ((0 until w).any { protected[it] } && (0 until w).any { protected[(h-1)*w+it] }) ||
+            ((0 until h).any { protected[it*w] } && (0 until h).any { protected[it*w+w-1] })
+        if (entering > maxOf(8,textPixels/25) || (crosses && entering>3)) return null
+        // Distinguish a border beside lettering from an art stroke crossing the lettering.
+        val central = pixels.indices.count { i -> protected[i] && lines.any {
+            left+i%w > it.left+(it.right-it.left)*.15 && left+i%w < it.right-(it.right-it.left)*.15 &&
+                top+i/w > it.top+(it.bottom-it.top)*.15 && top+i/w < it.bottom-(it.bottom-it.top)*.15
+        } }
+        if (central > 4) return null
         val seen = BooleanArray(pixels.size); val raw = BooleanArray(pixels.size)
         for (start in pixels.indices) if (foreground[start] && !protected[start] && !seen[start]) {
             head = 0; tail = 1; queue[0] = start; seen[start] = true
@@ -149,7 +166,8 @@ object TextRegionRepair {
         for (y in 0 until h) { var row = 0; for (x in 0 until w) { row += gray[y * w + x]; sum[(y + 1) * stride + x + 1] = sum[y * stride + x + 1] + row } }
         val contrast = IntArray(pixels.size); val bins = IntArray(512)
         fun bin(c: Int) = (Color.red(c) / 32) * 64 + (Color.green(c) / 32) * 8 + Color.blue(c) / 32
-        fun inText(x: Int, y: Int) = lines.any { x in it.left until it.right && y in it.top until it.bottom }
+        val outline = (size / 6).coerceIn(2, 8)
+        fun inText(x: Int, y: Int) = lines.any { x in it.left - outline until it.right + outline && y in it.top - outline until it.bottom + outline }
         var textArea = 0
         for (y in 0 until h) for (x in 0 until w) if (inText(left + x, top + y)) {
             textArea++
@@ -179,7 +197,7 @@ object TextRegionRepair {
                 }
             }
             if (b < 3) continue
-            if (y1 - y0 > size * 1.3 || x1 - x0 > size * 2.5) return null
+            if (y1 - y0 > size * 1.3 || x1 - x0 > maxOf(size * 5, lines.maxOf { it.right - it.left } + outline * 2)) return null
             components++; kept += b
             val grow = (size / 8).coerceIn(2, 5)
             for (n in 0 until b) for (dy in -grow..grow) for (dx in -grow..grow) {
@@ -187,7 +205,17 @@ object TextRegionRepair {
                 if (x in 2 until w - 2 && y in 2 until h - 2) mask[y * w + x] = true
             }
         }
-        if (components < 2 || kept < textArea / 80 || kept > textArea * .60 || mask.count { it } > pixels.size * .60) return null
+        // An outlined glyph includes its enclosed dark center. Leaving the center out
+        // feeds the old letter back into the inpainter and produces letter-shaped smears.
+        val outside = BooleanArray(mask.size); var head = 0; var tail = 0
+        for (i in mask.indices) if (!mask[i] && (i % w == 0 || i % w == w - 1 || i / w == 0 || i / w == h - 1)) { outside[i] = true; queue[tail++] = i }
+        while (head < tail) {
+            val i = queue[head++]; val x = i % w; val y = i / w
+            for (j in intArrayOf(if (x > 0) i - 1 else -1, if (x + 1 < w) i + 1 else -1, if (y > 0) i - w else -1, if (y + 1 < h) i + w else -1))
+                if (j >= 0 && !mask[j] && !outside[j]) { outside[j] = true; queue[tail++] = j }
+        }
+        for (i in mask.indices) if (!outside[i]) mask[i] = true
+        if (components < 1 || kept < textArea / 80 || kept > textArea * .60 || mask.count { it } > pixels.size * .70) return null
         return BubbleRegion(left, top, PixelMask(w, h, BooleanArray(w * h) { true }), mask, pixels.first(),
             textColor = if (luminance(target) > 160) Color.WHITE else Color.BLACK, inpaint = true)
     }
@@ -313,13 +341,13 @@ object TextRegionRepair {
             // A strong stroke entering from outside the padded text area belongs to artwork or a border.
             if (delta > 32 && (x < 2 || y < 2 || x >= w - 2 || y >= h - 2)) return null
             if (inText(left + x, top + y)) {
-                textCount++; raw[i] = delta > 14
+                textCount++; raw[i] = delta > 8
                 if (delta > 45) { if (luminance(pixels[i]) > luminance(bg)) lighter += delta * delta else darker += delta * delta }
             } else { backgroundCount++; if (delta > 16) outside++ }
         }
         val count = raw.count { it }
         if (outside > maxOf(6, backgroundCount / 30) || count < 8 || count > textCount * .95 || lighter + darker < 4000) return null
-        val ink = BooleanArray(raw.size); val grow = (letterHeight / 9).coerceIn(2, 6)
+        val ink = BooleanArray(raw.size); val grow = (letterHeight / 7).coerceIn(3, 7)
         for (i in raw.indices) if (raw[i]) for (dy in -grow..grow) for (dx in -grow..grow) {
             val x = i % w + dx; val y = i / w + dy
             if (x in 2 until w - 2 && y in 2 until h - 2) ink[y * w + x] = true

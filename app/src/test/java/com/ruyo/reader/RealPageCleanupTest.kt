@@ -73,6 +73,13 @@ class RealPageCleanupTest {
         var remaining = 0
         for (y in 28 until 153) for (x in 155 until 527) if (Color.red(result.getPixel(x,y)) < 100) remaining++
         assertTrue("Dark caption strokes survived cleanup: $remaining",remaining < 8)
+        var outline = 0
+        val surface = requireNotNull(region.backgroundSurface)
+        for (y in 28 until 153) for (x in 155 until 527) {
+            val actual=result.getPixel(x,y);val expected=surface.colorAt(x,y)
+            if (kotlin.math.abs(Color.red(actual)-Color.red(expected)) > 8) outline++
+        }
+        assertTrue("Caption outlines or shadows survived cleanup: $outline",outline < 20)
         preview("caption",result); result.recycle(); source.recycle()
     }
 }

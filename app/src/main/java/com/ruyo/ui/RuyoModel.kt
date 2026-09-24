@@ -51,6 +51,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var preparationReports by mutableStateOf<Map<String, PagePreparation>>(emptyMap()); private set
     private var preparationJob: Job? = null
     private var prepareAfterTask = false
+    override fun onCleared() {
+        kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { (ocrService as? AutoCloseable)?.close() }
+        super.onCleared()
+    }
     private val preparationKey get() = "text-v5:" + targetLanguage + ":" + ocrScript.name
     fun seriesFor(bookId: String) = series.firstOrNull { bookId in it.chapters }
     fun orderedChapters(seriesId: String): List<LocalBook> = series.firstOrNull { it.id == seriesId }?.chapters.orEmpty().mapNotNull { id -> books.firstOrNull { it.id == id } }

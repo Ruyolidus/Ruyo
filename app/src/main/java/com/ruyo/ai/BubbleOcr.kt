@@ -33,10 +33,19 @@ fun interface OcrService {
 }
 
 /** Own the input copy until ML Kit's native task finishes, including after cancellation. */
-class BubbleOcr(context: Context? = null) : OcrService {
+class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) -> Unit)? = null) : OcrService, AutoCloseable {
     private val app = context?.applicationContext
-    private val detector by lazy { app?.let(::LearnedTextDetector) }
+    private val detectorState = lazy { app?.let(::LearnedTextDetector) }
     private val gate = Mutex()
+    @Volatile private var released = false
+    private var client: com.google.mlkit.vision.text.TextRecognizer? = null
+    private var clientScript: OcrScript? = null
+    private fun closeClient() { client?.close(); client = null; clientScript = null }
+    override fun close() {
+        released = true
+        if (gate.tryLock()) try { closeClient() } finally { gate.unlock() }
+        if (detectorState.isInitialized()) detectorState.value?.close()
+    }
     override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript): String {
         val original = process(script, { crop(source, region) }) { it.text.trim() }
         if (original.isNotEmpty()) return original
@@ -66,24 +75,32 @@ class BubbleOcr(context: Context? = null) : OcrService {
                 OcrTiles.merge(found, result)
                 require(found.size <= 300) { "This image has too many text lines. Tap individual text areas to edit them." }
             }
-            val model = detector
-            if (model != null) {
-                currentCoroutineContext().ensureActive()
+            currentCoroutineContext().ensureActive()
+            val model = detectorState.value
+            val detected = if (model == null) emptyList() else {
                 val tileImage = Bitmap.createBitmap(source, tile.left, tile.top, tile.width(), tile.height())
-                val boxes = try { model.detect(tileImage) } finally { if (tileImage !== source) tileImage.recycle() }
-                for (local in boxes) {
-                    currentCoroutineContext().ensureActive()
-                    val box = Rect(local).apply { offset(tile.left, tile.top) }
-                    val alreadyRead = found.any { line -> line.confidence >= .68f && box.contains(line.x, line.y) &&
-                        line.right - line.left >= box.width() * .60f && line.bottom - line.top >= box.height() * .35f }
-                    if (alreadyRead) continue
-                    val hint = found.filter { box.contains(it.x, it.y) }.minByOrNull { it.confidence }
-                    val angle = hint?.angle ?: 0f
-                    for (contrast in listOf(false, true)) OcrTiles.merge(found, recognizeBox(source, box, script, contrast, angle = angle))
-                    if (hint == null || hint.confidence < .65f) for (isolate in 1..2)
-                        OcrTiles.merge(found, recognizeBox(source, box, script, false, isolate, angle))
-                    require(found.size <= 300) { "This image has too many separate text lines." }
+                try { model.detect(tileImage).map { Rect(it).apply { offset(tile.left, tile.top) } } }
+                finally { if (tileImage !== source) tileImage.recycle() }
+            }
+            onDetected?.invoke(detected)
+            // A detector miss must not prevent a weak primary OCR line from receiving a crop retry.
+            val weak = found.filter { it.confidence < .65f && tile.contains(it.x,it.y) }.map { line ->
+                val pad = ((line.bottom-line.top)/2).coerceIn(10,36)
+                Rect((line.left-pad).coerceAtLeast(0),(line.top-pad).coerceAtLeast(0),
+                    (line.right+pad).coerceAtMost(source.width),(line.bottom+pad).coerceAtMost(source.height))
+            }
+            for (box in (weak+detected).distinct()) {
+                currentCoroutineContext().ensureActive()
+                fun alreadyRead() = found.any { line -> line.confidence >= .68f && box.contains(line.x,line.y) &&
+                    line.right-line.left >= box.width()*.60f && line.bottom-line.top >= box.height()*.25f }
+                if (alreadyRead()) continue
+                val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { it.confidence }
+                val angle = hint?.angle ?: 0f
+                for (mode in listOf(0,1,2)) {
+                    OcrTiles.merge(found,recognizeBox(source,box,script,false,mode,angle))
+                    if (alreadyRead()) break
                 }
+                require(found.size <= 300) { "This image has too many separate text lines." }
             }
         }
         return found.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
@@ -96,7 +113,7 @@ class BubbleOcr(context: Context? = null) : OcrService {
     }
 
     private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean, isolate: Int = 0, angle: Float = 0f): List<OcrLine> {
-        val scale = (96f / rect.height()).coerceIn(1f, 3f)
+        val scale = (192f / rect.height()).coerceIn(1.5f, 3f)
         val w = (rect.width() * scale).toInt(); val h = (rect.height() * scale).toInt()
         val radians = Math.toRadians(angle.toDouble())
         val bw = (w * kotlin.math.abs(kotlin.math.cos(radians)) + h * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
@@ -109,11 +126,17 @@ class BubbleOcr(context: Context? = null) : OcrService {
         return process(script, {
             Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { bitmap ->
                 bitmap.eraseColor(Color.WHITE)
-                val canvas = android.graphics.Canvas(bitmap)
-                canvas.translate(bw / 2f, bh / 2f); canvas.rotate(-angle)
-                canvas.drawBitmap(source, rect, android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
-                if (contrast) OcrTiles.contrast(bitmap)
-                if (isolate != 0) OcrTiles.isolate(bitmap, isolate == 2)
+                // Transform source pixels before adding a white margin. Inverting bright
+                // lettering after padding creates a black frame that confuses recognition.
+                val crop = Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
+                try {
+                    android.graphics.Canvas(crop).drawBitmap(source, rect, Rect(0, 0, crop.width, crop.height), null)
+                    if (contrast) OcrTiles.contrast(crop)
+                    if (isolate != 0) OcrTiles.isolate(crop, isolate == 2)
+                    val canvas = android.graphics.Canvas(bitmap)
+                    canvas.translate(bw / 2f, bh / 2f); canvas.rotate(-angle)
+                    canvas.drawBitmap(crop, null, android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                } finally { crop.recycle() }
             }
         }) { result -> result.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { bounds ->
             val original = android.graphics.RectF(bounds); inverse.mapRect(original)
@@ -128,15 +151,17 @@ class BubbleOcr(context: Context? = null) : OcrService {
         val bitmap: Bitmap
         val recognizer: com.google.mlkit.vision.text.TextRecognizer
         try {
+            check(!released) { "Text recognition has been closed." }
             bitmap = input()
             try {
-                recognizer = when (script) {
+                if (clientScript != script) closeClient()
+                recognizer = client ?: when (script) {
                     OcrScript.LATIN -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
                     OcrScript.JAPANESE -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
                     OcrScript.CHINESE -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
                     OcrScript.KOREAN -> TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
                     OcrScript.DEVANAGARI -> TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
-                }
+                }.also { client = it; clientScript = script }
             } catch (error: Exception) { bitmap.recycle(); throw error }
         } catch (error: Exception) { gate.unlock(); throw error }
         return suspendCancellableCoroutine { continuation ->
@@ -147,10 +172,10 @@ class BubbleOcr(context: Context? = null) : OcrService {
                             check(task.isSuccessful) { "Text recognition failed. Check the source script or enter the text manually." }
                             result(task.result)
                         })
-                    } finally { recognizer.close(); bitmap.recycle(); gate.unlock() }
+                    } finally { if (released) closeClient(); bitmap.recycle(); gate.unlock() }
                 }
             } catch (_: Exception) {
-                recognizer.close(); bitmap.recycle(); gate.unlock()
+                closeClient(); bitmap.recycle(); gate.unlock()
                 if (continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException("Text recognition could not start. Try again or enter the text manually.")))
             }
         }

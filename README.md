@@ -3,7 +3,7 @@
 An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.6.0
+## Preview 0.6.1
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
@@ -289,7 +289,26 @@ retried, including after reopening the app. Page reports distinguish saved
 translations, completed swaps, cleanup failures and fitting failures. A processed
 page does not mean every visible word has been recognized or successfully replaced.
 
-Four user-supplied screenshots live only in Android test assets. Device regressions
+Five user-supplied screenshots live only in Android test assets. Device regressions
 check the actual pale dialogue, outlined caption, blue caption and joined balloons;
 cleanup previews and OCR diagnostics are exported in device-check artifacts.
 Fixed Japanese strings in these rendering tests are fixtures, not live AI translations.
+
+### Cleanup refresh in 0.6.1
+
+Chapter preparation now rebuilds older cleanup masks using the saved translations.
+It keeps their wording and font settings and writes a backup of the previous edits
+before the first rebuild. Manual editor saves in this version lock their cleanup
+against future automatic refreshes. Reopen Prepare for an existing chapter to use
+the new engine; reimporting and retranslating completed dialogue are unnecessary.
+
+Uniform-background repair follows whole letter components and protects border
+strokes and their antialiasing. Shaded repair includes faint outlines; artwork
+masks include enclosed glyph centers before reconstruction. OCR retries can
+straighten slanted text crops without rotating the displayed translation. Accidental
+literal backslash-n sequences become actual line separators, including in older saves.
+
+Pixel regressions check the real joined balloons, brown lettering and grey caption.
+They supplement OCR/fit checks, which by themselves cannot prove clean erasure.
+Detailed artwork hidden by large letters still cannot be reconstructed reliably
+by the local interpolation method; review those results against Original.

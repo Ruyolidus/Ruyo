@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.6.0)
+## Current scope (0.6.1)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated
@@ -307,3 +307,11 @@ The Apache-2.0 PP-OCRv5 mobile detection model is bundled through a checksummed 
 step. ONNX Runtime executes it locally; its text-line regions guide additional ML Kit
 crop recognition. It is not a segmentation or inpainting model. Foreground masks
 and background repair remain separate operations and require their own validation.
+
+Cleanup version 5 persists per edit. Preparation re-segments legacy edits, validates
+the saved text fit, and replaces only their cleanup data without calling a provider.
+The pre-migration edit file is backed up once. Manual editor saves set cleanupLocked
+and are excluded from subsequent automatic migrations. Old files without provenance
+are considered legacy; their text, typography and original image remain preserved.
+Literal escaped line breaks are normalized at the provider, persistence and renderer
+boundaries. No general escape evaluator is used.

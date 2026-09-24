@@ -66,6 +66,26 @@ class ShadedTextRepairTest {
             store.removeEdit(book.id, edit.id); assertTrue(source.sameAs(store.open(book).displayed))
         } finally { root.deleteRecursively() }
     }
+    @Test fun artworkOutlineMaskIncludesTheDarkCentersBeforeInpainting() {
+        val source = Bitmap.createBitmap(400,220,Bitmap.Config.ARGB_8888)
+        val background = IntArray(400*220) { i -> val wave=(sin(i%400/23.0)*14+sin(i/400/13.0)*9).toInt();Color.rgb(55+wave,125+wave,185+wave) }
+        source.setPixels(background,0,400,0,0,400,220)
+        val glyphs=Bitmap.createBitmap(400,220,Bitmap.Config.ARGB_8888)
+        val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { textSize=42f;typeface=Typeface.create("sans-serif",Typeface.BOLD) }
+        val canvas=Canvas(glyphs); val bounds=Rect();paint.getTextBounds("Ready",0,5,bounds)
+        paint.style=Paint.Style.STROKE;paint.strokeWidth=6f;paint.color=Color.WHITE;canvas.drawText("Ready",90f,126f,paint)
+        paint.style=Paint.Style.FILL;paint.color=Color.BLACK;canvas.drawText("Ready",90f,126f,paint)
+        Canvas(source).drawBitmap(glyphs,0f,0f,null)
+        val region=requireNotNull(TextRegionRepair.selectArtwork(source,listOf(OcrLine("Ready",90+bounds.left,126+bounds.top,90+bounds.right,126+bounds.bottom))))
+        var omitted=0;var total=0
+        for(y in 0 until 220) for(x in 0 until 400) if(Color.alpha(glyphs.getPixel(x,y))>200) {
+            total++
+            if(!region.contains(x,y)||!region.eraseMask[(y-region.top)*region.width+x-region.left]) omitted++
+        }
+        assertTrue("Original stroke centers or outlines were left outside the cleanup mask: $omitted / $total",omitted<total*.01)
+        val clean=Bitmap.createBitmap(BubbleEditRenderer.cleanedPixels(source,region),region.width,region.height,Bitmap.Config.ARGB_8888)
+        write(clean,"outlined-art-complete-mask");clean.recycle();source.recycle();glyphs.recycle()
+    }
     @Test fun localInpaintingPreservesEveryUnmaskedPixelAndReconstructsNarrowTextStrokes() {
         val w = 260; val h = 140
         val background = IntArray(w * h) { i ->

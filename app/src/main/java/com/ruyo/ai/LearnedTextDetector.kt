@@ -13,14 +13,22 @@ import java.nio.FloatBuffer
 import kotlin.math.roundToInt
 
 /** Text-line detection independent of speech-bubble outlines. The pinned model is bundled offline. */
-internal class LearnedTextDetector(context: Context) {
+internal class LearnedTextDetector(context: Context) : AutoCloseable {
+    private val lock = Any()
+    private var closed = false
     private val app = context.applicationContext
     private val environment = OrtEnvironment.getEnvironment()
-    private val session by lazy {
+    private val sessionState = lazy {
         val bytes = app.assets.open("ocr/ppocr-det.onnx").use { it.readBytes() }
         OrtSession.SessionOptions().use { options ->
             options.setIntraOpNumThreads(2); options.setInterOpNumThreads(1)
             environment.createSession(bytes, options)
+        }
+    }
+    override fun close() = synchronized(lock) {
+        if (!closed) {
+            closed = true
+            if (sessionState.isInitialized()) sessionState.value.close()
         }
     }
     @Suppress("UNCHECKED_CAST")
@@ -42,8 +50,12 @@ internal class LearnedTextDetector(context: Context) {
             tensor[w * h * 2 + i] = (Color.red(pixels[i]) / 255f - mean[2]) / std[2]
         }
         val map = OnnxTensor.createTensor(environment, FloatBuffer.wrap(tensor), longArrayOf(1, 3, h.toLong(), w.toLong())).use { input ->
-            session.run(mapOf(session.inputNames.single() to input)).use { result ->
-                (result[0].value as Array<Array<Array<FloatArray>>>)[0][0]
+            synchronized(lock) {
+                check(!closed) { "The text detector has been closed." }
+                val session = sessionState.value
+                session.run(mapOf(session.inputNames.single() to input)).use { result ->
+                    (result[0].value as Array<Array<Array<FloatArray>>>)[0][0]
+                }
             }
         }
         currentCoroutineContext().ensureActive()
