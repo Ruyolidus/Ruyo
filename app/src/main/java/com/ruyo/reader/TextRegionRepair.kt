@@ -178,13 +178,19 @@ object TextRegionRepair {
         fun bin(c: Int) = (Color.red(c) / 32) * 64 + (Color.green(c) / 32) * 8 + Color.blue(c) / 32
         val outline = (size / 6).coerceIn(2, 8)
         fun inText(x: Int, y: Int) = lines.any { x in it.left - outline until it.right + outline && y in it.top - outline until it.bottom + outline }
+        val surrounding = pixels.indices.filter { !inText(left+it%w,top+it/w) }.map { pixels[it] }
+        if (surrounding.size < 12) return null
+        fun edgeMedian(channel: (Int)->Int) = surrounding.map(channel).sorted()[surrounding.size/2]
+        val surroundingColor = Color.rgb(edgeMedian(Color::red),edgeMedian(Color::green),edgeMedian(Color::blue))
         var textArea = 0
         for (y in 0 until h) for (x in 0 until w) if (inText(left + x, top + y)) {
             textArea++
             val l = maxOf(0, x - radius); val r = minOf(w, x + radius + 1); val t = maxOf(0, y - radius); val b = minOf(h, y + radius + 1)
             val mean = (sum[b * stride + r] - sum[t * stride + r] - sum[b * stride + l] + sum[t * stride + l]) / ((r - l) * (b - t))
             val i = y * w + x; contrast[i] = gray[i] - mean
-            if (abs(contrast[i]) > 40) bins[bin(pixels[i])]++
+            // Dense black type makes the pale paper around it locally high-contrast
+            // too. That paper must never win the vote for the lettering color.
+            if (abs(contrast[i]) > 40 && distance(pixels[i],surroundingColor)>45) bins[bin(pixels[i])]++
         }
         val dominant = bins.indices.maxBy { bins[it] }
         if (bins[dominant] < maxOf(12, textArea / 45)) return null

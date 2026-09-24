@@ -41,13 +41,16 @@ class ComicRegressionTest {
         val source = Bitmap.createBitmap(screenshot, 0, 284, screenshot.width, 1180)
         screenshot.recycle()
         val report = JSONObject().put("fixture", name).put("expected", JSONArray(expected))
-        val detectorBoxes = JSONArray()
-        val ocr = BubbleOcr(context) { boxes -> boxes.forEach { detectorBoxes.put(JSONArray(listOf(it.left,it.top,it.right,it.bottom))) } }
+        val detectorBoxes = JSONArray();val crops = JSONArray()
+        val ocr = BubbleOcr(context,
+            onDetected = { boxes -> boxes.forEach { detectorBoxes.put(JSONArray(listOf(it.left,it.top,it.right,it.bottom))) } },
+            onCrop = { box,mode,lines -> crops.put(JSONObject().put("mode",mode).put("bounds",JSONArray(listOf(box.left,box.top,box.right,box.bottom)))
+                .put("lines",JSONArray().apply { lines.forEach { put(JSONObject().put("text",it.text).put("confidence",it.confidence).put("bounds",JSONArray(listOf(it.left,it.top,it.right,it.bottom)))) } })) })
         try {
             val started = System.nanoTime()
             val lines = withTimeout(120_000) { ocr.lines(source, OcrScript.LATIN) }
             fun json(line: OcrLine) = JSONObject().put("text", line.text).put("confidence", line.confidence).put("angle", line.angle).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
-            report.put("detectorBoxes",detectorBoxes)
+            report.put("detectorBoxes",detectorBoxes).put("cropReadings",crops)
             report.put("ocr", JSONArray().apply { lines.forEach { put(json(it)) } })
             report.put("ocrMilliseconds", (System.nanoTime() - started) / 1_000_000)
             if (name == "pale-dialogue") {

@@ -33,7 +33,8 @@ fun interface OcrService {
 }
 
 /** Own the input copy until ML Kit's native task finishes, including after cancellation. */
-class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) -> Unit)? = null) : OcrService, AutoCloseable {
+class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) -> Unit)? = null,
+    private val onCrop: ((Rect, Int, List<OcrLine>) -> Unit)? = null) : OcrService, AutoCloseable {
     private val app = context?.applicationContext
     private val detectorState = lazy { app?.let(::LearnedTextDetector) }
     private val gate = Mutex()
@@ -84,8 +85,7 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
             }
             onDetected?.invoke(detected)
             // A detector miss must not prevent a weak primary OCR line from receiving a crop retry.
-            val weak = found.filter { tile.contains(it.x,it.y) && (it.confidence < .65f ||
-                (it.confidence < .88f && OcrTiles.lightLettering(source,it))) }.map { line ->
+            val weak = found.filter { tile.contains(it.x,it.y) && it.confidence < .65f }.map { line ->
                 val pad = ((line.bottom-line.top)/2).coerceIn(10,36)
                 Rect((line.left-pad).coerceAtLeast(0),(line.top-pad).coerceAtLeast(0),
                     (line.right+pad).coerceAtMost(source.width),(line.bottom+pad).coerceAtMost(source.height))
@@ -94,13 +94,15 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                 currentCoroutineContext().ensureActive()
                 val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { kotlin.math.abs(it.y-box.centerY()) }
                 val light = hint?.let { OcrTiles.lightLettering(source,it) } == true
-                fun alreadyRead() = found.any { line -> line.confidence >= (if (light) .88f else .68f) && box.contains(line.x,line.y) &&
+                fun alreadyRead() = found.any { line -> line.confidence >= .68f && box.contains(line.x,line.y) &&
                     kotlin.math.abs(line.y-box.centerY()) <= box.height()*.20f &&
                     line.right-line.left >= box.width()*.60f && line.bottom-line.top >= box.height()*.25f }
                 if (alreadyRead()) continue
                 val angle = hint?.angle ?: 0f
-                for (mode in if (light) listOf(2,0,1) else listOf(3,1,0,2)) {
-                    OcrTiles.merge(found,recognizeBox(source,box,script,false,mode,angle))
+                for (mode in if (light) listOf(2,0) else listOf(3,0)) {
+                    val readings=recognizeBox(source,box,script,false,mode,angle)
+                    onCrop?.invoke(box,mode,readings)
+                    OcrTiles.merge(found,readings)
                     if (alreadyRead()) break
                 }
                 require(found.size <= 300) { "This image has too many separate text lines." }
