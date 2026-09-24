@@ -5,6 +5,7 @@ import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import com.ruyo.ai.OcrLine
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -81,5 +82,19 @@ class RealPageCleanupTest {
         }
         assertTrue("Caption outlines or shadows survived cleanup: $outline",outline < 20)
         preview("caption",result); result.recycle(); source.recycle()
+    }
+    @Test fun adjacentCommentRowsDoNotDisappearWhenOnlyTheirEmptyPaddingTouches() = runBlocking {
+        val source = source("page-comments")
+        val lines = listOf(OcrLine("oo(111.222)",40,573,194,605),OcrLine("THE SMART ONES QUIT FIRST.",20,626,344,651))
+        val areas = AutoBubbleDetector.analyze(source,lines)
+        assertEquals(2,areas.size)
+        val regions=areas.map { requireNotNull(it.region) { "Skipped ${it.source}" } }
+        assertFalse(regions[0].overlaps(regions[1]))
+        var result=source.copy(Bitmap.Config.ARGB_8888,true)
+        for (region in regions) { val next=clean(result,region);result.recycle();result=next }
+        var remaining=0
+        for(y in 623..653) for(x in 17..346) if(Color.red(result.getPixel(x,y))<90) remaining++
+        assertTrue("The English sentence was not completely removed: $remaining",remaining<8)
+        preview("comment",result);result.recycle();source.recycle()
     }
 }

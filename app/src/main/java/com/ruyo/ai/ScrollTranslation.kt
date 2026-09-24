@@ -116,7 +116,7 @@ class PageTranslationPipeline(
         }
         if (repairedSaved > 0) changed()
         val remaining = lines.filter { line -> existing.none { it.region.contains(line.x, line.y) } }
-        val candidates = withContext(Dispatchers.Default) { AutoBubbleDetector.analyze(page.original, remaining, lines) { store.areaCenters(page, it) } }
+        val candidates = withContext(Dispatchers.Default) { AutoBubbleDetector.analyze(page.original, remaining, lines, existing.map { it.region }) { store.areaCenters(page, it) } }
         if (!keepGoing()) return null
         val secret = withContext(Dispatchers.IO) { profiles.get(settings.profileId) }
         val cached = withContext(Dispatchers.IO) { store.textTranslations(page) }.toMutableMap()

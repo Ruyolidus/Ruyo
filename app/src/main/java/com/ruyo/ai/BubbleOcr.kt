@@ -99,7 +99,7 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                     line.right-line.left >= box.width()*.60f && line.bottom-line.top >= box.height()*.25f }
                 if (alreadyRead()) continue
                 val angle = hint?.angle ?: 0f
-                for (mode in if (light) listOf(2,0,1) else listOf(1,0,2)) {
+                for (mode in if (light) listOf(2,0,1) else listOf(3,1,0,2)) {
                     OcrTiles.merge(found,recognizeBox(source,box,script,false,mode,angle))
                     if (alreadyRead()) break
                 }
@@ -135,7 +135,8 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                 try {
                     android.graphics.Canvas(crop).drawBitmap(source, rect, Rect(0, 0, crop.width, crop.height), null)
                     if (contrast) OcrTiles.contrast(crop)
-                    if (isolate != 0) OcrTiles.isolate(crop, isolate == 2)
+                    if (isolate == 3) OcrTiles.outlined(crop)
+                    else if (isolate != 0) OcrTiles.isolate(crop, isolate == 2)
                     val canvas = android.graphics.Canvas(bitmap)
                     canvas.translate(bw / 2f, bh / 2f); canvas.rotate(-angle)
                     canvas.drawBitmap(crop, null, android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
@@ -241,6 +242,35 @@ internal object OcrTiles {
             }
         }
     }
+    /** Isolate neutral dark cores or bright lettering from colored comic artwork for OCR only. */
+    fun outlined(bitmap: Bitmap) {
+        val w=bitmap.width;val h=bitmap.height;val pixels=IntArray(w*h)
+        bitmap.getPixels(pixels,0,w,0,0,w,h)
+        val dark=BooleanArray(pixels.size);val bright=BooleanArray(pixels.size)
+        for(i in pixels.indices) {
+            val c=pixels[i];val lo=minOf(Color.red(c),Color.green(c),Color.blue(c));val hi=maxOf(Color.red(c),Color.green(c),Color.blue(c))
+            dark[i]=hi<150 && hi-lo<65;bright[i]=lo>185
+        }
+        val seen=BooleanArray(pixels.size);val queue=IntArray(pixels.size);val result=IntArray(pixels.size) { Color.WHITE }
+        for(start in pixels.indices) if(dark[start]&&!seen[start]) {
+            var head=0;var tail=1;var edge=0;var whiteEdge=0
+            queue[0]=start;seen[start]=true
+            while(head<tail) {
+                val i=queue[head++];val x=i%w;val y=i/w
+                for(dy in -1..1) for(dx in -1..1) {
+                    val xx=x+dx;val yy=y+dy
+                    if(xx !in 0 until w || yy !in 0 until h) { edge++;continue }
+                    val j=yy*w+xx
+                    if(dark[j]) { if(!seen[j]) { seen[j]=true;queue[tail++]=j } }
+                    else { edge++;if(bright[j])whiteEdge++ }
+                }
+            }
+            // Dark picture details are usually not enclosed by a pale glyph outline.
+            if(tail>=2 && whiteEdge>=3 && whiteEdge>edge*.30) for(n in 0 until tail) result[queue[n]]=Color.BLACK
+        }
+        bitmap.setPixels(result,0,w,0,0,w,h)
+    }
+
     /** Isolate neutral dark cores or bright lettering from colored comic artwork for OCR only. */
     fun isolate(bitmap: Bitmap, light: Boolean) {
         val pixels = IntArray(bitmap.width * bitmap.height)

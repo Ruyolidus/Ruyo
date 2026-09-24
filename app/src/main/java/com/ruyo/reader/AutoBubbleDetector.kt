@@ -13,11 +13,11 @@ data class TextArea(val lines: List<OcrLine>, val bounds: Rect, val source: Stri
 
 /** Text is the inventory. A bubble outline can improve layout, but cannot remove text from that inventory. */
 object AutoBubbleDetector {
-    suspend fun analyze(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines,
+    suspend fun analyze(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines, occupied: List<BubbleRegion> = emptyList(),
         savedCenters: (BubbleRegion) -> List<Point>? = { null }): List<TextArea> {
         require(lines.size <= 300) { "Too many text lines in one image." }
         val valid = lines.filter { it.text.isNotBlank() && it.left >= 0 && it.top >= 0 && it.right <= source.width && it.bottom <= source.height && it.right > it.left && it.bottom > it.top }
-        val accepted = mutableListOf<BubbleRegion>()
+        val accepted = occupied.toMutableList()
         return TextRegionRepair.groups(valid).map { block ->
             currentCoroutineContext().ensureActive()
             val bounds = Rect(block.minOf { it.left }, block.minOf { it.top }, block.maxOf { it.right }, block.maxOf { it.bottom })
@@ -25,10 +25,23 @@ object AutoBubbleDetector {
             var repair = smooth ?: TextRegionRepair.selectArtwork(source, block, allLines)
             // Only a successful lettering mask proceeds to optional outline/layout detection.
             if (repair != null && smooth != null) repair = roomForText(source, repair, block, allLines, savedCenters)
-            repair = repair?.takeUnless { region -> accepted.any { it.overlaps(region) } }
+            repair = repair?.let { separateLayout(it, accepted) }
             repair?.let { accepted += it }
             TextArea(block, bounds, block.joinToString("\n") { it.text }, repair, smooth == null)
         }
+    }
+
+    /** Empty padding can meet another area's padding without making either text
+     * disappear. Remove that shared layout space; never clip an erasure stroke. */
+    private fun separateLayout(region: BubbleRegion, occupied: List<BubbleRegion>): BubbleRegion? {
+        val neighbors = occupied.filter { it.overlaps(region) }
+        if (neighbors.isEmpty()) return region
+        val shape = BooleanArray(region.width*region.height) { i -> region.interior[i%region.width,i/region.width] }
+        for (i in shape.indices) if (shape[i] && neighbors.any { it.contains(region.left+i%region.width,region.top+i/region.width) }) {
+            if (region.eraseMask[i]) return null
+            shape[i] = false
+        }
+        return region.copy(interior = PixelMask(region.width,region.height,shape))
     }
 
     suspend fun detect(source: Bitmap, lines: List<OcrLine>, savedCenters: (BubbleRegion) -> List<Point>? = { null }): List<DetectedGroup> =
