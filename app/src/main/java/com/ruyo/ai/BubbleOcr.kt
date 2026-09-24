@@ -84,19 +84,22 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
             }
             onDetected?.invoke(detected)
             // A detector miss must not prevent a weak primary OCR line from receiving a crop retry.
-            val weak = found.filter { it.confidence < .65f && tile.contains(it.x,it.y) }.map { line ->
+            val weak = found.filter { tile.contains(it.x,it.y) && (it.confidence < .65f ||
+                (it.confidence < .88f && OcrTiles.lightLettering(source,it))) }.map { line ->
                 val pad = ((line.bottom-line.top)/2).coerceIn(10,36)
                 Rect((line.left-pad).coerceAtLeast(0),(line.top-pad).coerceAtLeast(0),
                     (line.right+pad).coerceAtMost(source.width),(line.bottom+pad).coerceAtMost(source.height))
             }
             for (box in (weak+detected).distinct()) {
                 currentCoroutineContext().ensureActive()
-                fun alreadyRead() = found.any { line -> line.confidence >= .68f && box.contains(line.x,line.y) &&
+                val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { kotlin.math.abs(it.y-box.centerY()) }
+                val light = hint?.let { OcrTiles.lightLettering(source,it) } == true
+                fun alreadyRead() = found.any { line -> line.confidence >= (if (light) .88f else .68f) && box.contains(line.x,line.y) &&
+                    kotlin.math.abs(line.y-box.centerY()) <= box.height()*.20f &&
                     line.right-line.left >= box.width()*.60f && line.bottom-line.top >= box.height()*.25f }
                 if (alreadyRead()) continue
-                val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { it.confidence }
                 val angle = hint?.angle ?: 0f
-                for (mode in listOf(0,1,2)) {
+                for (mode in if (light) listOf(2,0,1) else listOf(1,0,2)) {
                     OcrTiles.merge(found,recognizeBox(source,box,script,false,mode,angle))
                     if (alreadyRead()) break
                 }
@@ -194,6 +197,21 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
 
 /** Preserve working-image resolution through overlapping OCR tiles. No image leaves the device. */
 internal object OcrTiles {
+    /** Bright glyphs on a darker panel benefit from polarity correction even when
+     * the recognizer gives a plausible-looking, but misspelled, first reading. */
+    fun lightLettering(source: Bitmap, line: OcrLine): Boolean {
+        val width=line.right-line.left;val height=line.bottom-line.top
+        if(width<=0||height<=0) return false
+        val pixels=IntArray(width*height)
+        source.getPixels(pixels,0,width,line.left,line.top,width,height)
+        var dark=0;var bright=0
+        for(c in pixels) {
+            val value=minOf(Color.red(c),Color.green(c),Color.blue(c))
+            if(value<180) dark++
+            if(value>200) bright++
+        }
+        return dark>pixels.size/2 && bright>pixels.size/40
+    }
     fun regions(width: Int, height: Int): List<Rect> {
         fun starts(length: Int, limit: Int): List<Int> {
             if (length <= limit) return listOf(0)

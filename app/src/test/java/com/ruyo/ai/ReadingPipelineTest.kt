@@ -142,7 +142,13 @@ class ReadingPipelineTest {
         try {
             val book = store.addBitmap("Upgrade cleanup",source)
             val regions = AutoBubbleDetector.detect(source,lines).flatMap { it.bubbles }.map { it.region }
-            val legacy = BubbleEdit(region=regions[0].copy(eraseMask=BooleanArray(regions[0].eraseMask.size)),japanese="Saved wording",margin=3,languageTag="en")
+            // Older masks could exclude the leading/trailing strokes. A refresh must
+            // recover those pixels as well as filling holes inside the old region.
+            val line = lines[0]
+            val width = line.right-line.left-16; val height = line.bottom-line.top
+            val clipped = com.ruyo.reader.BubbleRegion(line.left+8,line.top,
+                com.ruyo.reader.PixelMask(width,height,BooleanArray(width*height) { true }),BooleanArray(width*height),Color.WHITE)
+            val legacy = BubbleEdit(region=clipped,japanese="Saved wording",margin=2,languageTag="en")
             val manual = BubbleEdit(region=regions[1],japanese="My correction",margin=3,languageTag="en",cleanupLocked=true)
             store.saveEdit(book.id,source,legacy);store.saveEdit(book.id,source,manual)
             PageTranslationPipeline(store,ocr,profiles,TranslationService { _,_,_->error("Saved translations must be reused") })
@@ -151,6 +157,7 @@ class ReadingPipelineTest {
             assertEquals("Saved wording",edits.single { it.id==legacy.id }.japanese)
             assertEquals(5,edits.single { it.id==legacy.id }.cleanupVersion)
             assertTrue(edits.single { it.id==legacy.id }.region.eraseMask.any { it })
+            assertTrue(edits.single { it.id==legacy.id }.region.left < clipped.left)
             assertEquals(0,edits.single { it.id==manual.id }.cleanupVersion)
             assertTrue(edits.single { it.id==manual.id }.cleanupLocked)
         } finally { directory.deleteRecursively();source.recycle() }

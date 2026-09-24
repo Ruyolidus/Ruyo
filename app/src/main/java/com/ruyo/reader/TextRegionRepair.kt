@@ -111,8 +111,13 @@ object TextRegionRepair {
         val crosses = ((0 until w).any { protected[it] } && (0 until w).any { protected[(h-1)*w+it] }) ||
             ((0 until h).any { protected[it*w] } && (0 until h).any { protected[it*w+w-1] })
         if (entering > maxOf(8,textPixels/25) || (crosses && entering>3)) return null
-        // Distinguish a border beside lettering from an art stroke crossing the lettering.
-        val central = pixels.indices.count { i -> protected[i] && lines.any {
+        // A skewed OCR box can contain an unrelated black balloon curve beside
+        // colored letters. Reject connections to the lettering's actual color,
+        // not every protected pixel inside its rectangular OCR bounds.
+        fun sourceColor(c: Int) = distance(c, target) <= 40 &&
+            abs((Color.red(c)-Color.green(c))-(Color.red(target)-Color.green(target))) < 12 &&
+            abs((Color.green(c)-Color.blue(c))-(Color.green(target)-Color.blue(target))) < 12
+        val central = pixels.indices.count { i -> protected[i] && sourceColor(pixels[i]) && lines.any {
             left+i%w > it.left+(it.right-it.left)*.15 && left+i%w < it.right-(it.right-it.left)*.15 &&
                 top+i/w > it.top+(it.bottom-it.top)*.15 && top+i/w < it.bottom-(it.bottom-it.top)*.15
         } }
@@ -143,8 +148,13 @@ object TextRegionRepair {
         val cw = x1 - x0; val ch = y1 - y0
         if (allLines.any { it !in lines && it.left < left + x1 && it.right > left + x0 && it.top < top + y1 && it.bottom > top + y0 }) return null
         val mask = BooleanArray(cw * ch) { ink[(it / cw + y0) * w + it % cw + x0] }
+        val backgroundSamples = pixels.indices.filter { !inText(left+it%w,top+it/w,halo/2) && distance(pixels[it],background)<=10 }
+            .map { Sample((it%w).toDouble()/(w-1),(it/w).toDouble()/(h-1),pixels[it]) }
+        val plane = fit(backgroundSamples)
+        val corners = plane?.let { listOf(it.color(0.0,0.0),it.color(1.0,0.0),it.color(0.0,1.0),it.color(1.0,1.0)) }
+            ?: List(4) { background }
         return BubbleRegion(left + x0, top + y0, PixelMask(cw, ch, BooleanArray(cw * ch) { true }), mask, background,
-            BackgroundSurface(left, top, w, h, List(4) { background }),
+            BackgroundSurface(left, top, w, h, corners),
             textColor = if (luminance(target) > luminance(background)) Color.WHITE else Color.BLACK)
     }
 
@@ -221,12 +231,13 @@ object TextRegionRepair {
     }
 
     /** Keep the bubble's layout shape, but isolate cleanup from OCR lettering bounds. */
-    fun refine(source: Bitmap, parent: BubbleRegion, lines: List<OcrLine>): BubbleRegion {
-        val text = select(source, lines) ?: selectArtwork(source, lines) ?: return parent
+    fun refine(source: Bitmap, parent: BubbleRegion, lines: List<OcrLine>, allLines: List<OcrLine> = lines,
+        allowExpansion: Boolean = false): BubbleRegion {
+        val text = select(source, lines, allLines) ?: selectArtwork(source, lines, allLines) ?: return parent
         val ink = BooleanArray(parent.width * parent.height)
         for (i in text.eraseMask.indices) if (text.eraseMask[i]) {
             val x = text.left + i % text.width; val y = text.top + i / text.width
-            if (!parent.contains(x, y)) return parent
+            if (!parent.contains(x, y)) return if (allowExpansion) text else parent
             ink[(y - parent.top) * parent.width + x - parent.left] = true
         }
         return parent.copy(eraseMask = ink, backgroundSurface = text.backgroundSurface, backgroundColor = text.backgroundColor,

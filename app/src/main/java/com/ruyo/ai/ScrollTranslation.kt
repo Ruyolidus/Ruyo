@@ -102,8 +102,8 @@ class PageTranslationPipeline(
             if (edit.cleanupVersion >= 5 || edit.cleanupLocked) continue
             val sourceLines = lines.filter { edit.region.contains(it.x, it.y) }
             if (sourceLines.isEmpty()) continue
-            val region = withContext(Dispatchers.Default) { TextRegionRepair.refine(page.original, edit.region, sourceLines) }
-            if (region === edit.region) continue
+            val region = withContext(Dispatchers.Default) { TextRegionRepair.refine(page.original, edit.region, sourceLines, lines, allowExpansion = true) }
+            if (region === edit.region || existing.any { it.id != edit.id && it.region.overlaps(region) }) continue
             val replacement = edit.copy(region = region, cleanupVersion = 5)
             val valid = withContext(Dispatchers.Default) { BubbleEditRenderer.preview(page.original, replacement).fold(
                 onSuccess = { it.crop.recycle(); it.fit.ink.recycle(); true }, onFailure = { false }) }
