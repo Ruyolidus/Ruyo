@@ -7,14 +7,21 @@ import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** A persisted bilinear or row-sampled surface. Coordinates stay on the page when areas split. */
-data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val height: Int, val corners: List<Int>, val rows: List<Int> = emptyList()) {
+data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val height: Int, val corners: List<Int>, val rows: List<Int> = emptyList(),
+    val coefficients: List<Double> = emptyList()) {
     init {
         require(left >= 0 && top >= 0 && width in 2..16_384 && height in 2..16_384 && corners.size == 4)
         require(rows.isEmpty() || rows.size == height * 2)
+        require(coefficients.isEmpty() || (coefficients.size == 18 && coefficients.all { it.isFinite() } && rows.isEmpty()))
     }
     fun colorAt(x: Int, y: Int): Int {
         val xx = ((x - left).toDouble() / (width - 1)).coerceIn(0.0, 1.0)
         val yy = ((y - top).toDouble() / (height - 1)).coerceIn(0.0, 1.0)
+        if (coefficients.isNotEmpty()) {
+            fun channel(offset: Int) = (coefficients[offset]+coefficients[offset+1]*xx+coefficients[offset+2]*yy+
+                coefficients[offset+3]*xx*xx+coefficients[offset+4]*xx*yy+coefficients[offset+5]*yy*yy).roundToInt().coerceIn(0,255)
+            return Color.rgb(channel(0),channel(6),channel(12))
+        }
         if (rows.isNotEmpty()) {
             val row = (y - top).coerceIn(0, height - 1) * 2
             fun channel(get: (Int) -> Int) = (get(rows[row]) * (1 - xx) + get(rows[row + 1]) * xx).roundToInt().coerceIn(0, 255)
@@ -51,7 +58,7 @@ object TextRegionRepair {
     }
 
     fun select(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine> = lines): BubbleRegion? =
-        selectUniform(source, lines, allLines) ?: selectFlat(source, lines, allLines) ?: selectShaded(source, lines, allLines)
+        selectUniform(source, lines, allLines) ?: selectFlat(source, lines, allLines) ?: selectShaded(source, lines, allLines) ?: selectCurved(source,lines,allLines)
 
     /** Whole foreground components on a stable background; outlines entering the crop stay protected. */
     private fun selectUniform(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine>): BubbleRegion? {
@@ -374,6 +381,72 @@ object TextRegionRepair {
             listOf(rows.first().first, rows.first().second, rows.last().first, rows.last().second), rows.flatMap { listOf(it.first, it.second) })
         return BubbleRegion(left, top, PixelMask(w, h, BooleanArray(w * h) { true }), ink, background(w / 2, h / 2), surface,
             textColor = if (lighter > darker) Color.WHITE else Color.BLACK)
+    }
+
+    /** Smooth two-dimensional shading needs more than a flat fill or row interpolation.
+     * Fit only exposed background, then remove both bright type and its darker shadow. */
+    private fun selectCurved(source: Bitmap, lines: List<OcrLine>, allLines: List<OcrLine>): BubbleRegion? {
+        if(lines.isEmpty() || lines.size>8) return null
+        val size=lines.map { it.bottom-it.top }.sorted()[lines.size/2]
+        val halo=(size/4).coerceIn(4,16);val pad=halo+(size/3).coerceIn(6,20)
+        val left=lines.minOf { it.left }-pad;val top=lines.minOf { it.top }-pad
+        val right=lines.maxOf { it.right }+pad;val bottom=lines.maxOf { it.bottom }+pad
+        val w=right-left;val h=bottom-top
+        if(left<0||top<0||right>source.width||bottom>source.height||w<16||h<16||w.toLong()*h>900_000) return null
+        if(allLines.any { it !in lines && it.left<right && it.right>left && it.top<bottom && it.bottom>top }) return null
+        fun inText(x:Int,y:Int)=lines.any { x in it.left-maxOf(halo,size/2) until it.right+maxOf(halo,size/2) && y in it.top-halo until it.bottom+halo }
+        val pixels=IntArray(w*h);source.getPixels(pixels,0,w,left,top,w,h)
+        if(pixels.any { Color.alpha(it)<250 }) return null
+        val samples=mutableListOf<Sample>();val step=maxOf(1,maxOf(w,h)/120)
+        for(y in 0 until h step step) for(x in 0 until w step step) if(!inText(left+x,top+y)) samples+=Sample(x.toDouble()/(w-1),y.toDouble()/(h-1),pixels[y*w+x])
+        if(samples.size<48) return null
+        var active:List<Sample> = samples
+        var surface:BackgroundSurface?=null
+        repeat(3) {
+            val matrix=Array(6) { DoubleArray(9) }
+            for(s in active) {
+                val v=doubleArrayOf(1.0,s.x,s.y,s.x*s.x,s.x*s.y,s.y*s.y)
+                val channels=intArrayOf(Color.red(s.color),Color.green(s.color),Color.blue(s.color))
+                for(row in 0..5) {
+                    for(col in 0..5) matrix[row][col]+=v[row]*v[col]
+                    for(channel in 0..2) matrix[row][6+channel]+=v[row]*channels[channel]
+                }
+            }
+            for(col in 0..5) {
+                val pivot=(col..5).maxBy { abs(matrix[it][col]) };val swap=matrix[col];matrix[col]=matrix[pivot];matrix[pivot]=swap
+                val factor=matrix[col][col];if(abs(factor)<.00000001) return null
+                for(j in col..8) matrix[col][j]/=factor
+                for(row in 0..5) if(row!=col) { val multiple=matrix[row][col];for(j in col..8) matrix[row][j]-=multiple*matrix[col][j] }
+            }
+            val coefficients=(0..2).flatMap { channel -> (0..5).map { matrix[it][channel+6] } }
+            val current=BackgroundSurface(left,top,w,h,List(4) { pixels.first() },coefficients=coefficients)
+            active=samples.filter { distance(it.color,current.colorAt(left+(it.x*(w-1)).roundToInt(),top+(it.y*(h-1)).roundToInt()))<=10 }
+            if(active.size<samples.size*.97) return null
+            surface=current
+        }
+        val fitted=requireNotNull(surface)
+        val grid=(0..4).flatMap { y -> (0..4).map { x -> fitted.colorAt(left+x*(w-1)/4,top+y*(h-1)/4) } }
+        if(grid.any { a -> grid.any { b -> distance(a,b)>110 } }) return null
+        val raw=BooleanArray(pixels.size);var outside=0;var bgCount=0;var textCount=0;var lighter=0L;var darker=0L
+        for(i in pixels.indices) {
+            val x=i%w;val y=i/w;val bg=fitted.colorAt(left+x,top+y);val delta=distance(pixels[i],bg)
+            if(delta>32 && (x<2||y<2||x>=w-2||y>=h-2)) return null
+            if(inText(left+x,top+y)) {
+                textCount++;raw[i]=delta>8
+                if(delta>45) { if(luminance(pixels[i])>luminance(bg)) lighter+=delta*delta else darker+=delta*delta }
+            } else { bgCount++;if(delta>16) outside++ }
+        }
+        val count=raw.count { it }
+        if(outside>maxOf(6,bgCount/30)||count<8||count>textCount*.96||lighter+darker<4000) return null
+        val mask=BooleanArray(raw.size);val grow=(size/7).coerceIn(3,7)
+        for(i in raw.indices) if(raw[i]) for(dy in -grow..grow) for(dx in -grow..grow) {
+            val x=i%w+dx;val y=i/w+dy
+            if(x in 2 until w-2 && y in 2 until h-2) mask[y*w+x]=true
+        }
+        if(mask.count { it }>pixels.size*.90) return null
+        val corners=listOf(fitted.colorAt(left,top),fitted.colorAt(right-1,top),fitted.colorAt(left,bottom-1),fitted.colorAt(right-1,bottom-1))
+        return BubbleRegion(left,top,PixelMask(w,h,BooleanArray(w*h) { true }),mask,fitted.colorAt(left+w/2,top+h/2),fitted.copy(corners=corners),
+            textColor=if(lighter>darker) Color.WHITE else Color.BLACK)
     }
 
     private data class Sample(val x: Double, val y: Double, val color: Int)

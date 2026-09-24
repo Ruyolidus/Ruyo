@@ -288,9 +288,12 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             val surface = obj.optJSONObject("surface")?.let { s ->
                 val corners = s.getJSONArray("corners"); require(corners.length() == 4)
                 val rows = s.optJSONArray("rows")
+                val coefficients = s.optJSONArray("coefficients")
                 require(rows == null || rows.length() <= 32_768)
+                require(coefficients == null || coefficients.length() in listOf(0,18))
                 com.ruyo.reader.BackgroundSurface(s.getInt("left"), s.getInt("top"), s.getInt("width"), s.getInt("height"), (0..3).map { corners.getInt(it) },
-                    if (rows == null) emptyList() else (0 until rows.length()).map { rows.getInt(it) })
+                    if (rows == null) emptyList() else (0 until rows.length()).map { rows.getInt(it) },
+                    if (coefficients == null) emptyList() else (0 until coefficients.length()).map { coefficients.getDouble(it) })
             }
             val region = BubbleRegion(obj.getInt("left"), obj.getInt("top"), PixelMask(w, h, unpack(obj.getString("interior"), w * h)), unpack(obj.getString("erase"), w * h), obj.getInt("color"),
                 surface, obj.optInt("textColor", Color.rgb(39, 42, 53)), obj.optBoolean("inpaint"))
@@ -308,7 +311,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             .put("cleanupVersion", edit.cleanupVersion).put("cleanupLocked", edit.cleanupLocked)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
             .put("inpaint", edit.region.inpaint).put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
-                .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)).put("rows", JSONArray(s.rows)) })
+                .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)).put("rows", JSONArray(s.rows)).put("coefficients",JSONArray(s.coefficients)) })
             .put("color", edit.region.backgroundColor).put("interior", pack(edit.region.interior.copyPixels())).put("erase", pack(edit.region.eraseMask))) }
     }.toString())
 

@@ -13,6 +13,9 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import java.io.File
+import java.util.UUID
+import org.robolectric.RuntimeEnvironment
+import com.ruyo.data.LocalBookStore
 
 /** Pixel regressions use the user's original English lettering, not a synthetic font. */
 @RunWith(RobolectricTestRunner::class)
@@ -95,6 +98,36 @@ class RealPageCleanupTest {
         var remaining=0
         for(y in 623..653) for(x in 17..346) if(Color.red(result.getPixel(x,y))<90) remaining++
         assertTrue("The English sentence was not completely removed: $remaining",remaining<8)
+        val surface=requireNotNull(regions[1].backgroundSurface) { "A pale comment row needs smooth background repair" }
+        var outlines=0
+        for(y in 623..653) for(x in 17..346) if(kotlin.math.abs(Color.red(result.getPixel(x,y))-Color.red(surface.colorAt(x,y)))>12) outlines++
+        assertTrue("Pale outlines remain after removing the black letters: $outlines",outlines<25)
         preview("comment",result);result.recycle();source.recycle()
+    }
+    @Test fun blueCaptionRemovesBothBrightLettersAndTheirDarkShadowsAndReopensExactly() = runBlocking {
+        val source=source("blue-caption")
+        val lines=listOf(OcrLine("A BATTLE AGAINST EVIL",150,424,536,464),OcrLine("DARK MAGES HAS BEGUN!",138,476,548,518))
+        val region=requireNotNull(TextRegionRepair.select(source,lines))
+        assertFalse("A smooth blue panel should not reuse letter shadows as inpainting colors",region.inpaint)
+        val surface=requireNotNull(region.backgroundSurface)
+        val result=clean(source,region)
+        var remnants=0
+        for(y in 416..530) for(x in 126..558) {
+            val actual=result.getPixel(x,y);val bg=surface.colorAt(x,y)
+            if(maxOf(kotlin.math.abs(Color.red(actual)-Color.red(bg)),kotlin.math.abs(Color.green(actual)-Color.green(bg)),kotlin.math.abs(Color.blue(actual)-Color.blue(bg)))>12) remnants++
+        }
+        assertTrue("Original caption shadows survived: $remnants",remnants<25)
+        preview("blue-shadows",result)
+        val root=File(RuntimeEnvironment.getApplication().cacheDir,"curved-"+UUID.randomUUID())
+        try {
+            val store=LocalBookStore(RuntimeEnvironment.getApplication(),root,File(root,"stage"))
+            val book=store.addBitmap("Blue caption",source)
+            val edit=BubbleEdit(region=region,japanese="読めた。",margin=4)
+            store.saveEdit(book.id,source,edit)
+            val reopened=store.open(book)
+            assertEquals(surface,reopened.edits.single().region.backgroundSurface)
+            val expected=BubbleEditRenderer.composite(source,listOf(edit))
+            assertTrue(expected.sameAs(reopened.displayed));expected.recycle()
+        } finally { root.deleteRecursively();result.recycle();source.recycle() }
     }
 }

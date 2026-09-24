@@ -303,8 +303,9 @@ against future automatic refreshes. Reopen Prepare for an existing chapter to us
 the new engine; reimporting and retranslating completed dialogue are unnecessary.
 
 Uniform-background repair follows whole letter components and protects border
-strokes and their antialiasing. Shaded repair includes faint outlines; artwork
-masks include enclosed glyph centers before reconstruction. OCR retries can
+strokes and their antialiasing. Shaded repair includes faint outlines. Curved panel shading is fitted from exposed
+background so broad letter shadows do not feed their colors back into reconstruction.
+Artwork masks include enclosed glyph centers before reconstruction. OCR retries can
 straighten slanted text crops without rotating the displayed translation. Accidental
 literal backslash-n sequences become actual line separators, including in older saves.
 

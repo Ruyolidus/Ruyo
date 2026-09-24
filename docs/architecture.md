@@ -315,3 +315,9 @@ and are excluded from subsequent automatic migrations. Old files without provena
 are considered legacy; their text, typography and original image remain preserved.
 Literal escaped line breaks are normalized at the provider, persistence and renderer
 boundaries. No general escape evaluator is used.
+
+Smooth curved panels may persist a quadratic background surface with six coefficients
+per color channel. Fits use exposed background samples and are rejected when those
+samples, boundary pixels or predicted shading are inconsistent. Older corner/row
+surfaces remain readable. This fallback removes bright lettering and darker shadows
+together, before trying the approximate artwork inpainter.
