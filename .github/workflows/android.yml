@@ -3,8 +3,7 @@ name: Android APK
 on:
   push:
     branches: [main, 'feature/**', 'codex/**']
-  pull_request:
-    branches: [main]
+  # Branch pushes also attach checks to their PR; do not launch a duplicate run.
   workflow_dispatch:
 
 permissions:
