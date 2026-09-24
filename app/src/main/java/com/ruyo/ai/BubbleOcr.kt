@@ -100,7 +100,9 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                     line.right-line.left >= box.width()*.60f && line.bottom-line.top >= box.height()*.25f }
                 if (alreadyRead()) continue
                 val angle = hint?.angle ?: 0f
-                for (mode in if (light) listOf(2,0) else listOf(3,0)) {
+                // A pale outline around dark letters also trips the bright-letter
+                // heuristic. Always try its enclosed dark cores before inversion.
+                for (mode in if (light) listOf(3,2,0) else listOf(3,0)) {
                     val readings=recognizeBox(source,box,script,false,mode,angle)
                     onCrop?.invoke(box,mode,readings)
                     OcrTiles.merge(found,readings)
