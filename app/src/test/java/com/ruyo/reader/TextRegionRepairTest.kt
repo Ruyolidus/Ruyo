@@ -23,6 +23,35 @@ import kotlin.math.abs
 @Config(sdk = [35])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class TextRegionRepairTest {
+    @Test fun connectedDisplayWordIsRemovedAsAWholeInsteadOfOnlyItsPunctuation() {
+        val source = Bitmap.createBitmap(760, 200, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.WHITE) }
+        val canvas = Canvas(source)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.BLACK; textSize = 62f; typeface = android.graphics.Typeface.create("serif",android.graphics.Typeface.BOLD)
+            style = Paint.Style.FILL_AND_STROKE; strokeWidth = 5f
+        }
+        var x = 65f
+        // Tight, touching display lettering reproduces the connected title failure.
+        for (letter in "TOURNAMENT") {
+            canvas.drawText(letter.toString(),x,122f,paint)
+            x += paint.measureText(letter.toString())*.70f
+        }
+        canvas.drawText("!",x+30f,122f,paint)
+        val line = OcrLine("TOURNAMENT!",58,69,(x+65).toInt(),128)
+        val region = requireNotNull(TextRegionRepair.select(source,listOf(line)))
+        val clean = Bitmap.createBitmap(BubbleEditRenderer.cleanedPixels(source,region),region.width,region.height,Bitmap.Config.ARGB_8888)
+        var original = 0; var remaining = 0
+        for (y in line.top until line.bottom) for (xx in line.left until line.right) if (Color.red(source.getPixel(xx,y))<130) {
+            original++
+            if (!region.contains(xx,y) || Color.red(clean.getPixel(xx-region.left,y-region.top))<130) remaining++
+        }
+        assertTrue("The connected source word survived: $remaining / $original",original>1000 && remaining<8)
+        val output = BubbleEditRenderer.composite(source,listOf(BubbleEdit(region=region,japanese="大会の日",margin=4)))
+        val directory=File(System.getProperty("ruyo.previewDir")).apply { mkdirs() }
+        File(directory,"connected-title-original.png").outputStream().use { source.compress(Bitmap.CompressFormat.PNG,100,it) }
+        File(directory,"connected-title-translated.png").outputStream().use { output.compress(Bitmap.CompressFormat.PNG,100,it) }
+        source.recycle();clean.recycle();output.recycle()
+    }
     private fun fixture(top: Int, bottom: Int, ink: Int): Pair<Bitmap, OcrLine> {
         val source = Bitmap.createBitmap(360, 260, Bitmap.Config.ARGB_8888)
         val surface = BackgroundSurface(0, 0, 360, 260, listOf(top, top, bottom, bottom))

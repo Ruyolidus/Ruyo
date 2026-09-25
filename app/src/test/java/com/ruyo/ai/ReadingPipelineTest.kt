@@ -148,14 +148,14 @@ class ReadingPipelineTest {
             val width = line.right-line.left-16; val height = line.bottom-line.top
             val clipped = com.ruyo.reader.BubbleRegion(line.left+8,line.top,
                 com.ruyo.reader.PixelMask(width,height,BooleanArray(width*height) { true }),BooleanArray(width*height),Color.WHITE)
-            val legacy = BubbleEdit(region=clipped,japanese="Saved wording",margin=2,languageTag="en")
+            val legacy = BubbleEdit(region=clipped,japanese="Saved wording",margin=2,languageTag="en",cleanupVersion=5)
             val manual = BubbleEdit(region=regions[1],japanese="My correction",margin=3,languageTag="en",cleanupLocked=true)
             store.saveEdit(book.id,source,legacy);store.saveEdit(book.id,source,manual)
             PageTranslationPipeline(store,ocr,profiles,TranslationService { _,_,_->error("Saved translations must be reused") })
                 .prepare(store.open(book),TranslationSettings(profiles.profile.id,"en",OcrScript.LATIN),{true},{},{})
             val edits=store.open(book).edits
             assertEquals("Saved wording",edits.single { it.id==legacy.id }.japanese)
-            assertEquals(5,edits.single { it.id==legacy.id }.cleanupVersion)
+            assertEquals(com.ruyo.reader.TextRegionRepair.VERSION,edits.single { it.id==legacy.id }.cleanupVersion)
             assertTrue(edits.single { it.id==legacy.id }.region.eraseMask.any { it })
             assertTrue(edits.single { it.id==legacy.id }.region.left < clipped.left)
             assertEquals(0,edits.single { it.id==manual.id }.cleanupVersion)

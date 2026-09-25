@@ -22,7 +22,8 @@ import java.util.concurrent.Executor
 enum class OcrScript(val label: String) {
     LATIN("Latin (English, French…)"), JAPANESE("Japanese"), CHINESE("Chinese"), KOREAN("Korean"), DEVANAGARI("Devanagari (Hindi…)")
 }
-data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f, val angle: Float = 0f) {
+data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f, val angle: Float = 0f,
+    val alternatives: List<String> = emptyList()) {
     val x get() = (left + right) / 2
     val y get() = (top + bottom) / 2
 }
@@ -91,7 +92,9 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                 Rect((line.left-pad).coerceAtLeast(0),(line.top-pad).coerceAtLeast(0),
                     (line.right+pad).coerceAtMost(source.width),(line.bottom+pad).coerceAtMost(source.height))
             }
-            for (box in (weak+detected).distinct()) {
+            // Overlapping retries must include the whole slanted paragraph. A crop
+            // through the neighboring line turns descenders into unrelated letters.
+            for (box in OcrTiles.retryRegions(weak, detected)) {
                 currentCoroutineContext().ensureActive()
                 val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { kotlin.math.abs(it.y-box.centerY()) }
                 val light = hint?.let { OcrTiles.lightLettering(source,it) } == true
@@ -121,7 +124,7 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
     }
 
     private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean, isolate: Int = 0, angle: Float = 0f): List<OcrLine> {
-        val scale = (192f / rect.height()).coerceIn(1.5f, 3f)
+        val scale = (256f / rect.height()).coerceIn(2f, 3f)
         val w = (rect.width() * scale).toInt(); val h = (rect.height() * scale).toInt()
         val radians = Math.toRadians(angle.toDouble())
         val bw = (w * kotlin.math.abs(kotlin.math.cos(radians)) + h * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
@@ -203,6 +206,31 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
 
 /** Preserve working-image resolution through overlapping OCR tiles. No image leaves the device. */
 internal object OcrTiles {
+    fun retryRegions(weak: List<Rect>, detected: List<Rect>): List<Rect> {
+        val pending = (weak + detected).map(::Rect).toMutableList()
+        val result = mutableListOf<Rect>()
+        while (pending.isNotEmpty()) {
+            val group = pending.removeAt(0)
+            var changed: Boolean
+            do {
+                changed = false
+                val iterator = pending.iterator()
+                while (iterator.hasNext()) {
+                    val other = iterator.next()
+                    val width = (minOf(group.right,other.right)-maxOf(group.left,other.left)).coerceAtLeast(0)
+                    val height = (minOf(group.bottom,other.bottom)-maxOf(group.top,other.top)).coerceAtLeast(0)
+                    val area = minOf(group.width()*group.height(),other.width()*other.height())
+                    val mergedHeight = maxOf(group.bottom,other.bottom)-minOf(group.top,other.top)
+                    if (width*height > area*.30 && mergedHeight <= 256 &&
+                        width > minOf(group.width(),other.width())*.55) {
+                        group.union(other); iterator.remove(); changed = true
+                    }
+                }
+            } while (changed)
+            result += group
+        }
+        return result
+    }
     /** Bright glyphs on a darker panel benefit from polarity correction even when
      * the recognizer gives a plausible-looking, but misspelled, first reading. */
     fun lightLettering(source: Bitmap, line: OcrLine): Boolean {
@@ -240,10 +268,12 @@ internal object OcrTiles {
             else {
                 val other = existing[duplicate]
                 // A full line from the overlap can replace a fragment at a tile boundary.
-                if ((line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) ||
-                    (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) existing[duplicate] = line.copy(
-                        left = minOf(line.left, other.left), top = minOf(line.top, other.top),
-                        right = maxOf(line.right, other.right), bottom = maxOf(line.bottom, other.bottom))
+                val chosen = if ((line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) ||
+                    (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) line else other
+                val alternatives = (listOf(other.text,line.text) + other.alternatives + line.alternatives)
+                    .distinctBy { it.lowercase().replace(Regex("\\s+"), "") }
+                    .filter { !it.equals(chosen.text, ignoreCase = true) && it.length in 1..512 }.take(2)
+                existing[duplicate] = chosen.copy(alternatives = alternatives)
             }
         }
     }

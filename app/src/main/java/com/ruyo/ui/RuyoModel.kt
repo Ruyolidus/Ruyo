@@ -55,7 +55,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch { (ocrService as? AutoCloseable)?.close() }
         super.onCleared()
     }
-    private val preparationKey get() = "text-v5:" + targetLanguage + ":" + ocrScript.name
+    private val preparationKey get() = "text-v${TextRegionRepair.VERSION}:" + targetLanguage + ":" + ocrScript.name
     fun seriesFor(bookId: String) = series.firstOrNull { bookId in it.chapters }
     fun orderedChapters(seriesId: String): List<LocalBook> = series.firstOrNull { it.id == seriesId }?.chapters.orEmpty().mapNotNull { id -> books.firstOrNull { it.id == id } }
     fun neighbor(delta: Int): LocalBook? {
@@ -606,7 +606,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val current = draft ?: return@task
         if (current.preview == null) return@task
         val book = opened ?: return@task
-        withContext(Dispatchers.IO) { editorStore.saveEdit(book.book.id, book.original, current.edit.copy(cleanupLocked = true, cleanupVersion = 5), book.page.id) }
+        withContext(Dispatchers.IO) { editorStore.saveEdit(book.book.id, book.original, current.edit.copy(cleanupLocked = true, cleanupVersion = TextRegionRepair.VERSION), book.page.id) }
         finishEditor("Bubble saved")
     }
     fun removeEdit() = task {

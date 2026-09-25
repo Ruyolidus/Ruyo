@@ -32,6 +32,8 @@ class ComicRegressionTest {
     @Test fun blueCaption() = checkPage("blue-caption", listOf("battleagainstevil", "darkmages", "gamblersinstinct", "chanceofwinning"))
     @Test fun joinedDialogueAndUnenclosedText() = checkPage("joined-dialogue", listOf("icameto", "father", "ordered", "thisplace", "war", "dontletanyone", "approach"))
 
+    @Test fun rankDialogueAndContraction() = checkPage("rank-dialogue", listOf("atleast", "srank", "puthim", "onparwith", "ssrankhunter", "orhigher"))
+
     private fun normalized(text: String) = text.lowercase().filter { it.isLetterOrDigit() }
     private fun checkPage(name: String, expected: List<String>) = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()

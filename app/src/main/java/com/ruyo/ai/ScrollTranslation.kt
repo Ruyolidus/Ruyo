@@ -99,12 +99,12 @@ class PageTranslationPipeline(
             currentCoroutineContext().ensureActive()
             if (!keepGoing()) return null
             val edit = existing[index]
-            if (edit.cleanupVersion >= 5 || edit.cleanupLocked) continue
+            if (edit.cleanupVersion >= TextRegionRepair.VERSION || edit.cleanupLocked) continue
             val sourceLines = lines.filter { edit.region.contains(it.x, it.y) }
             if (sourceLines.isEmpty()) continue
             val region = withContext(Dispatchers.Default) { TextRegionRepair.refine(page.original, edit.region, sourceLines, lines, allowExpansion = true) }
             if (region === edit.region || existing.any { it.id != edit.id && it.region.overlaps(region) }) continue
-            val replacement = edit.copy(region = region, cleanupVersion = 5)
+            val replacement = edit.copy(region = region, cleanupVersion = TextRegionRepair.VERSION)
             val valid = withContext(Dispatchers.Default) { BubbleEditRenderer.preview(page.original, replacement).fold(
                 onSuccess = { it.crop.recycle(); it.fit.ink.recycle(); true }, onFailure = { false }) }
             if (!valid) continue
@@ -132,7 +132,7 @@ class PageTranslationPipeline(
             while (offset < pending.size && batch.size < 4 && characters + pending[offset].source.length <= 6000) {
                 val area = pending[offset++]; batch += area; characters += area.source.length
             }
-            val missing = batch.mapIndexedNotNull { i, area -> if (key(area) !in cached) SourceDialogue(i.toString(), area.source) else null }
+            val missing = batch.mapIndexedNotNull { i, area -> if (key(area) !in cached) SourceDialogue(i.toString(), area.source, area.lines) else null }
                 .distinctBy { key(batch[it.id.toInt()]) }
             if (missing.isNotEmpty()) {
                 status("Translating " + missing.size + if (missing.size == 1) " text area…" else " text areas together…")
@@ -155,7 +155,7 @@ class PageTranslationPipeline(
                 val sourceHeight = area.lines.map { (it.bottom - it.top).toFloat() }.sorted().let { it[it.size / 2] }
                 val edit = BubbleEdit(region = region, japanese = requireNotNull(cached[key(area)]),
                     margin = maxOf(2, minOf(region.width, region.height) / 14), languageTag = settings.language,
-                    sourceLetterHeight = sourceHeight, matchSourceSize = true, cleanupVersion = 5)
+                    sourceLetterHeight = sourceHeight, matchSourceSize = true, cleanupVersion = TextRegionRepair.VERSION)
                 val fits = withContext(Dispatchers.Default) {
                     BubbleEditRenderer.preview(page.original, edit).fold(onSuccess = { preview ->
                         preview.crop.recycle(); preview.fit.ink.recycle(); true

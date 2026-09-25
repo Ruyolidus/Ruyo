@@ -23,6 +23,16 @@ class OcrTilesTest {
         val found = mutableListOf(OcrLine("GAIVBLER", 20, 20, 180, 60, .4f), OcrLine("Next", 250, 20, 340, 60, .99f))
         OcrTiles.merge(found, listOf(OcrLine("GAMBLER", 21, 20, 181, 60, .97f)))
         assertEquals(listOf("GAMBLER", "Next"), found.map { it.text })
+        assertEquals(listOf("GAIVBLER"), found.first().alternatives)
+    }
+    @Test fun confidentButConflictingOcrKeepsTheAlternativeForTranslation() {
+        val found=mutableListOf(OcrLine("ID PUT HIM",20,20,180,60,.85f))
+        OcrTiles.merge(found,listOf(OcrLine("I'D PUT HIM",20,20,180,60,.70f)))
+        assertEquals("ID PUT HIM",found.single().text)
+        assertEquals(listOf("I'D PUT HIM"),found.single().alternatives)
+        val crops=OcrTiles.retryRegions(listOf(android.graphics.Rect(10,10,200,90),android.graphics.Rect(30,55,180,125)),
+            listOf(android.graphics.Rect(250,10,400,70)))
+        assertEquals(listOf(android.graphics.Rect(10,10,200,125),android.graphics.Rect(250,10,400,70)),crops)
     }
     @Test fun contrastPassKeepsDarkStrokesAndDropsSmoothBackgroundShading() {
         val bitmap = Bitmap.createBitmap(100, 90, Bitmap.Config.ARGB_8888)

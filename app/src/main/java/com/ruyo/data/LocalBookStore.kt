@@ -13,6 +13,7 @@ import com.ruyo.reader.BubbleAreas
 import com.ruyo.reader.BubbleEditRenderer
 import com.ruyo.reader.BubbleRegion
 import com.ruyo.reader.PixelMask
+import com.ruyo.reader.TextRegionRepair
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -184,7 +185,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
 
     @Synchronized fun backupCleanup(page: OpenBook) {
         val folder = pageFolder(page.book, page.page)
-        val backup = File(folder, "edits-before-cleanup-v5.json")
+        val backup = File(folder, "edits-before-cleanup-v${TextRegionRepair.VERSION}.json")
         if (!backup.exists()) write(backup, read(File(folder, "edits.json")))
     }
 

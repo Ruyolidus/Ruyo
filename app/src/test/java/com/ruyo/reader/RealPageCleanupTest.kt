@@ -53,6 +53,45 @@ class RealPageCleanupTest {
         assertEquals(source.getPixel(445,430),result.getPixel(445,430))
         preview("joined",result); result.recycle(); source.recycle()
     }
+    @Test fun originalRankDialogueKeepsBothJoinedBubblesIndependentAndCompletelyClean() = runBlocking {
+        val source=source("rank-dialogue")
+        val upper=listOf(OcrLine("AT LEAST",201,384,361,414),OcrLine("S-RANK... NO,",167,420,398,452))
+        val lower=listOf(OcrLine("I'D PUT HIM",354,622,560,653),OcrLine("ON PAR WITH AN",310,659,605,692),
+            OcrLine("SS-RANK HUNTER",306,696,605,725),OcrLine("OR HIGHER.",357,733,553,764))
+        val areas=AutoBubbleDetector.analyze(source,upper+lower)
+        assertEquals(2,areas.size)
+        val regions=areas.map { requireNotNull(it.region) { "Skipped ${it.source}" } }
+        assertFalse(regions[0].overlaps(regions[1]))
+        var result=source.copy(Bitmap.Config.ARGB_8888,true)
+        for(region in regions) { val next=clean(result,region);result.recycle();result=next }
+        for(line in upper+lower) {
+            var remaining=0
+            for(y in line.top until line.bottom) for(x in line.left until line.right) if(Color.red(result.getPixel(x,y))<120) remaining++
+            assertTrue("Original letters remain in ${line.text}: $remaining",remaining<8)
+        }
+        preview("rank",result)
+        val edits=areas.mapIndexed { i,area -> BubbleEdit(region=requireNotNull(area.region),
+            japanese=if(i==0) "少なくともSランク…いや、" else "SSランクのハンターと同等か、それ以上だろう。",margin=4,
+            matchSourceSize=true,sourceLetterHeight=31f) }
+        val translated=BubbleEditRenderer.composite(source,edits)
+        preview("rank-translated",translated)
+        result.recycle();source.recycle();translated.recycle()
+    }
+    @Test fun touchingOutlinesAcrossTwoSlantedLinesAreRepairedTogether() {
+        val source=source("joined-dialogue")
+        val lines=listOf(OcrLine("Don't let anyone",205,882,371,926),OcrLine("approach.",239,908,343,952))
+        val region=requireNotNull(TextRegionRepair.selectArtwork(source,lines))
+        val cleaned=clean(source,region)
+        var original=0;var remaining=0
+        for(y in 885..943) for(x in 220..361) {
+            fun bright(c:Int)=minOf(Color.red(c),Color.green(c),Color.blue(c))>230
+            if(bright(source.getPixel(x,y))) original++
+            if(bright(cleaned.getPixel(x,y))) remaining++
+        }
+        assertTrue("Pale outlines survive local repair: $remaining / $original",remaining<original*.05)
+        preview("slanted-outline",cleaned)
+        source.recycle();cleaned.recycle()
+    }
     @Test fun brownEffectRemovesSolidLetterCentersAndPreservesTheBlackBalloonLine() {
         val source = source("pale-dialogue")
         val line = OcrLine("GIGGLE",230,77,454,209)

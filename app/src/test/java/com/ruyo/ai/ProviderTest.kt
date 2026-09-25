@@ -135,6 +135,18 @@ class ProviderTest {
         }
     }
 
+    @Test fun uncertainOcrIsSuppliedAsAlternativesWithoutDuplicatingDialogueOrSendingPixels() {
+        val request=TranslationClient.batchRequest(ProviderSecret(profile(),testKey),listOf(
+            SourceDialogue("a","ID PUT HIM",listOf(OcrLine("ID PUT HIM",0,0,160,40,.80f,alternatives=listOf("I'D PUT HIM"))))) ,"ja")
+        val messages=JSONObject(request.body).getJSONArray("messages")
+        val dialogue=JSONObject(messages.getJSONObject(1).getString("content")).getJSONArray("dialogue")
+        assertEquals(1,dialogue.length())
+        val item=dialogue.getJSONObject(0)
+        assertEquals("ID PUT HIM",item.getString("text"))
+        assertEquals("I'D PUT HIM",item.getJSONArray("ocr_readings").getJSONObject(0).getJSONArray("alternatives").getString(0))
+        assertFalse(request.body.contains("image_url"));assertFalse(request.body.contains(testKey))
+    }
+
     @Test fun batchesMatchByIdAndRejectMissingDuplicateOrOversizedDialogue() {
         fun response(items: JSONArray): String = JSONObject().put("choices", JSONArray().put(JSONObject().put("finish_reason", "stop")
             .put("message", JSONObject().put("content", JSONObject().put("translations", items).toString())))).toString()

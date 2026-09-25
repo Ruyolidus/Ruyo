@@ -37,6 +37,8 @@ data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val he
  * Smooth-background repair is validated separately from the reviewable artwork fallback.
  */
 object TextRegionRepair {
+    /** Bump when automatic masks change so saved chapters are prepared again. */
+    const val VERSION = 6
     fun groups(lines: List<OcrLine>): List<List<OcrLine>> {
         val remaining = lines.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left }).toMutableList()
         val output = mutableListOf<List<OcrLine>>()
@@ -132,14 +134,23 @@ object TextRegionRepair {
         val seen = BooleanArray(pixels.size); val raw = BooleanArray(pixels.size)
         for (start in pixels.indices) if (foreground[start] && !protected[start] && !seen[start]) {
             head = 0; tail = 1; queue[0] = start; seen[start] = true
-            var hits = 0; var x0 = w; var x1 = 0; var y0 = h; var y1 = 0
+            var hits = 0; var coreHits = 0; var x0 = w; var x1 = 0; var y0 = h; var y1 = 0
             while (head < tail) {
                 val i = queue[head++]; val x = i % w; val y = i / w
                 if (inText(left + x, top + y, halo / 2)) hits++
+                if (inText(left + x, top + y) && sourceColor(pixels[i])) coreHits++
                 x0 = minOf(x0, x); x1 = maxOf(x1, x); y0 = minOf(y0, y); y1 = maxOf(y1, y)
                 adjacent(i) { j -> if (foreground[j] && !protected[j] && !seen[j]) { seen[j] = true; queue[tail++] = j } }
             }
-            if (hits < 2 || tail < 3 || y1 - y0 > size * 1.8 || x1 - x0 > size * 5) continue
+            if (hits < 2 || tail < 3) continue
+            // Comic display fonts often join a whole word into one component.
+            // Its permitted width comes from the recognized line, not five letters.
+            if (y1 - y0 > size * 1.8 || x1 - x0 > lines.maxOf { it.right - it.left } + halo * 2) {
+                // A partial mask is not a successful cleanup. Let the other
+                // background models try instead of drawing over a rejected word.
+                if (coreHits >= 3) return null
+                continue
+            }
             for (n in 0 until tail) raw[queue[n]] = true
         }
         val ink = BooleanArray(pixels.size); val grow = (size / 10).coerceIn(2, 5)
@@ -147,6 +158,11 @@ object TextRegionRepair {
             val x = i % w + dx; val y = i / w + dy
             if (x in 1 until w - 1 && y in 1 until h - 1 && !protected[y * w + x]) ink[y * w + x] = true
         }
+        var core = 0; var omitted = 0
+        for (i in pixels.indices) if (inText(left + i % w, top + i / w) && sourceColor(pixels[i])) {
+            core++; if (!ink[i]) omitted++
+        }
+        if (core < 8 || omitted > maxOf(2, core / 100)) return null
         if (ink.count { it } < 8 || ink.count { it } > pixels.size * .65) return null
         val marked = ink.indices.filter { ink[it] }
         val edge = maxOf(3, size / 5)
@@ -220,7 +236,10 @@ object TextRegionRepair {
                 }
             }
             if (b < 3) continue
-            if (y1 - y0 > size * 1.3 || x1 - x0 > maxOf(size * 5, lines.maxOf { it.right - it.left } + outline * 2)) return null
+            // Outlines from slanted neighboring lines can touch. Keep that entire
+            // paragraph component, including the dark counters inside the outline.
+            if (y1 - y0 > maxOf(size * 1.3, (lines.maxOf { it.bottom } - lines.minOf { it.top } + outline * 2).toDouble()) ||
+                x1 - x0 > maxOf(size * 5, lines.maxOf { it.right - it.left } + outline * 2)) return null
             components++; kept += b
             val grow = (size / 8).coerceIn(2, 5)
             for (n in 0 until b) for (dy in -grow..grow) for (dx in -grow..grow) {
