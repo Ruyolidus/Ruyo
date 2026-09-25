@@ -13,7 +13,7 @@ the complete Japanese text into an inset shape. Never accept text overflow,
 chopped glyphs, ellipsis used to conceal overflow, or an opaque rectangular cover.
 Retain original images and immutable translation revisions.
 
-## Current scope (0.6.1)
+## Current scope (0.6.2)
 
 The Kotlin namespace and Android application ID are `com.ruyo`, with no debug suffix.
 The original prototype used `com.ruyolidus.ruyo.debug`; its data is not migrated

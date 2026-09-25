@@ -121,7 +121,10 @@ class PageTranslationPipeline(
         val secret = withContext(Dispatchers.IO) { profiles.get(settings.profileId) }
         val cached = withContext(Dispatchers.IO) { store.textTranslations(page) }.toMutableMap()
         val pending = candidates.filter { it.source.isNotBlank() && it.source.length <= 2000 }
-        var cleanupFailed = candidates.size - pending.size; var fitFailed = 0; var offset = 0; var artworkRepairs = 0
+        // An old automatic swap whose mask could not be rebuilt is still a review
+        // item. Its presence must not mark the page successfully upgraded forever.
+        val staleCleanup = existing.count { !it.cleanupLocked && it.cleanupVersion < TextRegionRepair.VERSION }
+        var cleanupFailed = candidates.size - pending.size + staleCleanup; var fitFailed = 0; var offset = 0; var artworkRepairs = 0
         val alreadyRendered = existing.count { it.languageTag == settings.language }
         var translated = alreadyRendered; var rendered = alreadyRendered
         fun key(area: TextArea) = translationCacheKey(secret.profile, settings.language, area.source)

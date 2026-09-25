@@ -189,6 +189,26 @@ class ReadingPipelineTest {
         } finally { directory.deleteRecursively(); source.recycle() }
     }
 
+    @Test fun failedLegacyCleanupRemainsReviewableInsteadOfBeingMarkedUpgraded() = runBlocking {
+        val source=Bitmap.createBitmap(160,120,Bitmap.Config.ARGB_8888).apply { eraseColor(Color.BLUE) }
+        val directory=File(context.cacheDir,"stale-cleanup-"+UUID.randomUUID())
+        val store=LocalBookStore(context,directory,File(directory,"stage"));val profiles=Profiles()
+        val ocr=object:OcrService {
+            override suspend fun recognize(source:Bitmap,region:BubbleRegion,script:OcrScript)="Wait."
+            override suspend fun lines(source:Bitmap,script:OcrScript)=listOf(OcrLine("Wait.",30,40,130,62))
+        }
+        try {
+            val book=store.addBitmap("Old incomplete mask",source)
+            val region=BubbleRegion(20,20,PixelMask(120,80,BooleanArray(9600) { true }),BooleanArray(9600),Color.BLUE)
+            val edit=BubbleEdit(region=region,japanese="待って。",margin=3,cleanupVersion=5)
+            store.saveEdit(book.id,source,edit)
+            val report=requireNotNull(PageTranslationPipeline(store,ocr,profiles,TranslationService { _,_,_->error("Reuse saved wording") })
+                .prepare(store.open(book),TranslationSettings(profiles.profile.id,"ja",OcrScript.LATIN),{true},{},{}))
+            assertTrue(report.needsReview);assertEquals(1,report.cleanupFailed)
+            assertEquals(5,store.open(book).edits.single().cleanupVersion)
+        } finally { directory.deleteRecursively();source.recycle() }
+    }
+
     @Test fun webImagesLoadOnceAndStayOutOfTheLibrary() = runBlocking {
         val (bitmap, _) = fixture()
         val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()

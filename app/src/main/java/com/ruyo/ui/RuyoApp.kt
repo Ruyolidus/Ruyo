@@ -347,7 +347,7 @@ private fun SettingsScreen(model: RuyoModel) {
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.6.0 preview")
+            SettingLine("Ruyo", com.ruyo.BuildConfig.VERSION_NAME + " · " + com.ruyo.BuildConfig.VERSION_CODE)
             Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Import chapter images, PDFs, or CBZs into named series. Prepare translations before reading, then switch between Original and Translated. Tap translated dialogue for grammar, vocabulary, examples, and practice.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }

@@ -101,7 +101,10 @@ class ShadedTextRepairTest {
         val pixels = IntArray(w * h); source.getPixels(pixels, 0, w, 0, 0, w, h)
         val repaired = LocalInpainter.repair(pixels, w, h, mask)
         var error = 0L; var count = 0
-        for (i in pixels.indices) if (mask[i]) { error += abs(Color.red(repaired[i]) - Color.red(background[i])); count++ }
+        for (i in pixels.indices) if (mask[i]) {
+            error += abs(Color.red(repaired[i]) - Color.red(background[i])); count++
+            assertTrue("Repair invented a dark or bright streak",Color.red(repaired[i]) in 67..93)
+        }
         else assertEquals(pixels[i], repaired[i])
         assertTrue("Local shading should remain continuous", error.toDouble() / count < 12)
         assertTrue(runCatching { LocalInpainter.repair(pixels, w, h, BooleanArray(w * h) { true }) }.isFailure)

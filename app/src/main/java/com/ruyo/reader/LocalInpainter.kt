@@ -38,16 +38,25 @@ object LocalInpainter {
                 if (dx * dx + dy * dy !in 1..9 || !valid(xx, yy)) continue
                 val c = output[yy * width + xx]
                 val factor = 1.0 / (dx * dx + dy * dy)
-                fun estimate(channel: (Int) -> Int): Double {
-                    val gx = if (valid(xx - 1, yy) && valid(xx + 1, yy)) (channel(output[yy * width + xx + 1]) - channel(output[yy * width + xx - 1])) / 2.0 else 0.0
-                    val gy = if (valid(xx, yy - 1) && valid(xx, yy + 1)) (channel(output[(yy + 1) * width + xx]) - channel(output[(yy - 1) * width + xx])) / 2.0 else 0.0
-                    val correction = (-dx * gx - dy * gy).coerceIn(-24.0, 24.0)
-                    return (channel(c) + correction).coerceIn(0.0, 255.0)
-                }
-                red += estimate(Color::red) * factor; green += estimate(Color::green) * factor; blue += estimate(Color::blue) * factor; weight += factor
+                // Extrapolating gradients from already reconstructed pixels
+                // amplifies tiny errors into dark streaks shaped like the old text.
+                // A convex fill cannot invent colors outside its boundary samples.
+                red += Color.red(c) * factor; green += Color.green(c) * factor; blue += Color.blue(c) * factor; weight += factor
             }
             require(weight > 0)
             output[i] = Color.rgb((red / weight).roundToInt(), (green / weight).roundToInt(), (blue / weight).roundToInt())
+        }
+        // Relax the propagation seams while holding every source pixel outside
+        // the mask fixed. This is smooth local repair, not recovery of hidden art.
+        repeat(24) {
+            for (parity in 0..1) for (n in 0 until tail) {
+                val i=queue[n];val x=i%width;val y=i/width
+                if ((x+y)%2!=parity) continue
+                var r=0;var g=0;var b=0;var total=0
+                fun add(j:Int) { val c=output[j];r+=Color.red(c);g+=Color.green(c);b+=Color.blue(c);total++ }
+                if(x>0) add(i-1);if(x+1<width) add(i+1);if(y>0) add(i-width);if(y+1<height) add(i+width)
+                if(total>0) output[i]=Color.rgb((r+total/2)/total,(g+total/2)/total,(b+total/2)/total)
+            }
         }
         return output
     }

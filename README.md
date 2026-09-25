@@ -3,7 +3,7 @@
 An Android reader for learning languages through comic dialogue. Japanese is the default target. Built with **Kotlin
 and Jetpack Compose**, with a native image and text renderer.
 
-## Preview 0.6.1
+## Preview 0.6.2
 
 The Android application ID and Kotlin namespace are **com.ruyo**. Debug builds use
 this exact application ID too; there is no `.debug` suffix. This installs as a
@@ -289,7 +289,7 @@ retried, including after reopening the app. Page reports distinguish saved
 translations, completed swaps, cleanup failures and fitting failures. A processed
 page does not mean every visible word has been recognized or successfully replaced.
 
-Five user-supplied screenshots live only in Android test assets. Device regressions
+Six user-supplied screenshots live only in Android test assets. Device regressions
 check the actual pale dialogue, outlined caption, blue caption and joined balloons;
 cleanup previews and OCR diagnostics are exported in device-check artifacts.
 Fixed Japanese strings in these rendering tests are fixtures, not live AI translations.
@@ -313,3 +313,32 @@ Pixel regressions check the real joined balloons, brown lettering and grey capti
 They supplement OCR/fit checks, which by themselves cannot prove clean erasure.
 Detailed artwork hidden by large letters still cannot be reconstructed reliably
 by the local interpolation method; review those results against Original.
+
+### Cleanup and OCR follow-up in 0.6.2
+
+Connected display lettering can be wider than five letter heights. Smooth cleanup
+now keeps the complete component and checks for omitted foreground pixels before
+accepting a mask. Touching outlines across a slanted paragraph are handled as one
+lettering component. These changes do not authorize repainting an entire rectangle.
+
+Prepare an existing chapter again to refresh automatic masks with cleanup engine 6.
+Saved wording and font settings are reused without another translation request for
+those edits. Unsuccessful mask upgrades stay flagged for retry. Explicitly saved manual masks remain locked. The previous edits are
+backed up separately for each cleanup engine version.
+
+OCR crop retries combine overlapping slanted lines instead of clipping each other.
+Independent detector bounds recover leading strokes clipped by recognition boxes.
+Local artwork repair uses bounded color interpolation and seam relaxation instead
+of repeatedly extrapolating already reconstructed gradients, which created streaks.
+Conflicting readings retain up to two alternatives per line; ambiguous readings and
+confidence values accompany text-only translation batches. Prompts ask for natural
+comic dialogue and contextual correction of clear OCR errors while preserving names,
+ranks and model numbers. A prompt is not a guarantee of semantic accuracy, especially
+with small local models. Previously saved wording is preserved during mask refresh.
+
+New regressions include a connected headline and the user's original fused S-rank /
+SS-rank dialogue. Pixel checks cover full source removal, separate layout areas and
+border preservation. Fixed Japanese text in renderer fixtures does not test a paid
+provider. Recognizing stylized Korean effects still requires the Korean source script;
+selecting Latin does not automatically enable mixed-script OCR. The local artwork
+repair remains approximate and cannot recover detailed art hidden by lettering.

@@ -92,9 +92,10 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                 Rect((line.left-pad).coerceAtLeast(0),(line.top-pad).coerceAtLeast(0),
                     (line.right+pad).coerceAtMost(source.width),(line.bottom+pad).coerceAtMost(source.height))
             }
-            // Overlapping retries must include the whole slanted paragraph. A crop
-            // through the neighboring line turns descenders into unrelated letters.
-            for (box in OcrTiles.retryRegions(weak, detected)) {
+            // Preserve individual readings and add full-paragraph retries. The
+            // two scales can resolve different words in small outlined lettering.
+            val joined = OcrTiles.retryRegions(weak, detected)
+            for (box in (weak + joined).distinct()) {
                 currentCoroutineContext().ensureActive()
                 val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { kotlin.math.abs(it.y-box.centerY()) }
                 val light = hint?.let { OcrTiles.lightLettering(source,it) } == true
@@ -106,13 +107,14 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                 // A pale outline around dark letters also trips the bright-letter
                 // heuristic. Always try its enclosed dark cores before inversion.
                 for (mode in if (light) listOf(3,2,0) else listOf(3,0)) {
-                    val readings=recognizeBox(source,box,script,false,mode,angle)
+                    val readings=recognizeBox(source,box,script,false,mode,angle,individual = box in weak)
                     onCrop?.invoke(box,mode,readings)
                     OcrTiles.merge(found,readings)
                     if (alreadyRead()) break
                 }
                 require(found.size <= 300) { "This image has too many separate text lines." }
             }
+            OcrTiles.coverDetectedLettering(found, detected)
         }
         return found.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
     }
@@ -123,8 +125,9 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
         return Math.toDegrees(kotlin.math.atan2((points[1].y - points[0].y).toDouble(), (points[1].x - points[0].x).toDouble())).toFloat().coerceIn(-25f, 25f)
     }
 
-    private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean, isolate: Int = 0, angle: Float = 0f): List<OcrLine> {
-        val scale = (256f / rect.height()).coerceIn(2f, 3f)
+    private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean, isolate: Int = 0, angle: Float = 0f,
+        individual: Boolean = false): List<OcrLine> {
+        val scale = if(individual) (192f / rect.height()).coerceIn(1.5f,3f) else (256f / rect.height()).coerceIn(2f,3f)
         val w = (rect.width() * scale).toInt(); val h = (rect.height() * scale).toInt()
         val radians = Math.toRadians(angle.toDouble())
         val bw = (w * kotlin.math.abs(kotlin.math.cos(radians)) + h * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
@@ -206,6 +209,25 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
 
 /** Preserve working-image resolution through overlapping OCR tiles. No image leaves the device. */
 internal object OcrTiles {
+    /** Recognition sometimes reads a complete word with a box that clips its first
+     * stroke. Use the independent detector's extent when it identifies that same
+     * single line; never combine neighboring lines just because their boxes meet. */
+    fun coverDetectedLettering(lines: MutableList<OcrLine>, boxes: List<Rect>) {
+        for (box in boxes) {
+            val matches = lines.indices.filter { index ->
+                val line=lines[index];val width=line.right-line.left;val height=line.bottom-line.top
+                val overlap=minOf(line.right,box.right)-maxOf(line.left,box.left)
+                width>0 && height>0 && box.width()<=width*1.8 && box.height()<=height*1.65 &&
+                    kotlin.math.abs(line.y-box.centerY())<=minOf(height,box.height())*.35 &&
+                    overlap>minOf(width,box.width())*.65
+            }
+            if(matches.size!=1) continue
+            val index=matches.single();val line=lines[index]
+            lines[index]=line.copy(left=minOf(line.left,box.left),top=minOf(line.top,box.top),
+                right=maxOf(line.right,box.right),bottom=maxOf(line.bottom,box.bottom))
+        }
+    }
+
     fun retryRegions(weak: List<Rect>, detected: List<Rect>): List<Rect> {
         val pending = (weak + detected).map(::Rect).toMutableList()
         val result = mutableListOf<Rect>()
@@ -258,12 +280,14 @@ internal object OcrTiles {
     fun merge(existing: MutableList<OcrLine>, added: List<OcrLine>) {
         for (line in added) {
             if (line.right <= line.left || line.bottom <= line.top) continue
-            val duplicate = existing.indexOfFirst { other ->
+            val duplicate = existing.indices.mapNotNull { index ->
+                val other=existing[index]
                 val width = (minOf(line.right, other.right) - maxOf(line.left, other.left)).coerceAtLeast(0)
                 val height = (minOf(line.bottom, other.bottom) - maxOf(line.top, other.top)).coerceAtLeast(0)
                 val smaller = minOf((line.right - line.left) * (line.bottom - line.top), (other.right - other.left) * (other.bottom - other.top))
-                width * height > smaller * .60
-            }
+                val overlap=width*height.toDouble()/smaller.coerceAtLeast(1)
+                if(overlap>.60) index to overlap else null
+            }.maxByOrNull { it.second }?.first ?: -1
             if (duplicate < 0) existing += line
             else {
                 val other = existing[duplicate]
@@ -272,7 +296,7 @@ internal object OcrTiles {
                     (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) line else other
                 val alternatives = (listOf(other.text,line.text) + other.alternatives + line.alternatives)
                     .distinctBy { it.lowercase().replace(Regex("\\s+"), "") }
-                    .filter { !it.equals(chosen.text, ignoreCase = true) && it.length in 1..512 }.take(2)
+                    .filter { !it.equals(chosen.text, ignoreCase = true) && it.length in 1..512 && it.length>=chosen.text.length*.60 }.take(2)
                 existing[duplicate] = chosen.copy(alternatives = alternatives)
             }
         }

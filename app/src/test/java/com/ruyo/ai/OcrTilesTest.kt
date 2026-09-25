@@ -34,6 +34,20 @@ class OcrTilesTest {
             listOf(android.graphics.Rect(250,10,400,70)))
         assertEquals(listOf(android.graphics.Rect(10,10,200,125),android.graphics.Rect(250,10,400,70)),crops)
     }
+    @Test fun detectorBoundsRecoverClippedLeadingLettersWithoutJoiningDifferentLines() {
+        val lines=mutableListOf(OcrLine("I CAME TO",196,407,325,441,.70f),OcrLine("NEXT LINE",109,450,396,477,.80f))
+        OcrTiles.coverDetectedLettering(lines,listOf(android.graphics.Rect(169,407,331,444),android.graphics.Rect(100,403,400,480)))
+        assertEquals(169,lines[0].left);assertEquals(331,lines[0].right)
+        assertEquals(109,lines[1].left);assertEquals(450,lines[1].top)
+        assertEquals("I CAME TO",lines[0].text)
+    }
+    @Test fun overlappingSlantedLinesMatchTheClosestReadingInsteadOfTheFirstBox() {
+        val lines=mutableListOf(OcrLine("Don't let anyone",203,871,370,934,.55f),OcrLine("arareochis",236,902,348,955,.23f))
+        OcrTiles.merge(lines,listOf(OcrLine("t",254,888,273,922,.43f),OcrLine("approach.",238,904,342,953,.45f)))
+        assertEquals(listOf("Don't let anyone","approach."),lines.map { it.text })
+        assertFalse(lines.first().alternatives.contains("approach."))
+        assertFalse(lines.any { "t" in it.alternatives })
+    }
     @Test fun contrastPassKeepsDarkStrokesAndDropsSmoothBackgroundShading() {
         val bitmap = Bitmap.createBitmap(100, 90, Bitmap.Config.ARGB_8888)
         for (y in 0 until 90) for (x in 0 until 100) bitmap.setPixel(x, y, Color.rgb(180 + y / 2, 180 + y / 2, 180 + y / 2))
