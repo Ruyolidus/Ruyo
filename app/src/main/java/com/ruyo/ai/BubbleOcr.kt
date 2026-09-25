@@ -22,8 +22,9 @@ import java.util.concurrent.Executor
 enum class OcrScript(val label: String) {
     LATIN("Latin (English, French…)"), JAPANESE("Japanese"), CHINESE("Chinese"), KOREAN("Korean"), DEVANAGARI("Devanagari (Hindi…)")
 }
+data class OcrWord(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float)
 data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f, val angle: Float = 0f,
-    val alternatives: List<String> = emptyList()) {
+    val alternatives: List<String> = emptyList(), val words: List<OcrWord> = emptyList()) {
     val x get() = (left + right) / 2
     val y get() = (top + bottom) / 2
 }
@@ -59,6 +60,7 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
 
     override suspend fun lines(source: Bitmap, script: OcrScript): List<OcrLine> {
         val found = mutableListOf<OcrLine>()
+        var wordRetries = 0
         for (tile in OcrTiles.regions(source.width, source.height)) {
             for (contrast in listOf(false, true)) {
                 currentCoroutineContext().ensureActive()
@@ -71,12 +73,39 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
                     text.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { r ->
                         if (line.text.isBlank() || r.width() <= 0 || r.height() <= 0) null
                         else OcrLine(line.text.trim(), (r.left + tile.left).coerceAtLeast(0), (r.top + tile.top).coerceAtLeast(0),
-                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence, slope(line))
+                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence, slope(line),
+                            words = line.elements.mapNotNull { word -> word.boundingBox?.let { b ->
+                                OcrWord(word.text,(b.left+tile.left).coerceAtLeast(0),(b.top+tile.top).coerceAtLeast(0),
+                                    (b.right+tile.left).coerceAtMost(source.width),(b.bottom+tile.top).coerceAtMost(source.height),word.confidence)
+                            } })
                     } }
                 }
                 onCrop?.invoke(tile,if(contrast) -2 else -1,result)
                 OcrTiles.merge(found, result)
                 require(found.size <= 300) { "This image has too many text lines. Tap individual text areas to edit them." }
+            }
+            // A line's average confidence can conceal one misread word. Retry
+            // only conflicting bright words, with a strict per-page work budget.
+            for (index in found.indices) {
+                val line=found[index]
+                if(wordRetries>=8 || script!=OcrScript.LATIN || !tile.contains(line.x,line.y) || line.confidence<.65f ||
+                    line.alternatives.isEmpty() || !OcrTiles.lightLettering(source,line)) continue
+                val words=line.words.filter { word ->
+                    val normalized=OcrTiles.normalized(word.text)
+                    normalized.length>=3 && line.alternatives.any { normalized !in OcrTiles.normalized(it) }
+                }.sortedBy { it.confidence }.take(2)
+                for(word in words) {
+                    if(wordRetries>=8) break
+                    currentCoroutineContext().ensureActive()
+                    val pad=((word.bottom-word.top)/6).coerceIn(3,10)
+                    val box=Rect((word.left-pad).coerceAtLeast(0),(word.top-pad).coerceAtLeast(0),
+                        (word.right+pad).coerceAtMost(source.width),(word.bottom+pad).coerceAtMost(source.height))
+                    if(box.width()<8 || box.height()<8) continue
+                    wordRetries++
+                    val readings=recognizeBox(source,box,script,false,2,line.angle)
+                    onCrop?.invoke(box,4,readings)
+                    readings.maxByOrNull { it.confidence }?.let { reading -> found[index]=OcrTiles.correctWord(found[index],word,reading) }
+                }
             }
             currentCoroutineContext().ensureActive()
             val model = detectorState.value
@@ -209,6 +238,26 @@ class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) 
 
 /** Preserve working-image resolution through overlapping OCR tiles. No image leaves the device. */
 internal object OcrTiles {
+    fun normalized(text: String): String = java.text.Normalizer.normalize(text,java.text.Normalizer.Form.NFKD)
+        .lowercase().filter { it.isLetterOrDigit() }
+
+    fun correctWord(line: OcrLine, word: OcrWord, reading: OcrLine): OcrLine {
+        val old=normalized(word.text);val new=normalized(reading.text)
+        if(new.length<3 || reading.text.any { it.isWhitespace() } || new.length !in (old.length*3/5)..(old.length*7/5+1) ||
+            reading.confidence<maxOf(.65f,word.confidence) || old==new) return line
+        var previous=IntArray(new.length+1) { it }
+        for(i in old.indices) {
+            val row=IntArray(new.length+1);row[0]=i+1
+            for(j in new.indices) row[j+1]=minOf(row[j]+1,previous[j+1]+1,previous[j]+if(old[i]==new[j]) 0 else 1)
+            previous=row
+        }
+        if(previous.last()>maxOf(1,old.length/4)) return line
+        val pattern=Regex("(?<![\\p{L}\\p{N}])"+Regex.escape(word.text)+"(?![\\p{L}\\p{N}])")
+        if(pattern.findAll(line.text).count()!=1) return line
+        val updated=pattern.replace(line.text) { reading.text }
+        return line.copy(text=updated,alternatives=(listOf(line.text)+line.alternatives).distinct().take(2))
+    }
+
     /** Recognition sometimes reads a complete word with a box that clips its first
      * stroke. Use the independent detector's extent when it identifies that same
      * single line; never combine neighboring lines just because their boxes meet. */
@@ -223,8 +272,9 @@ internal object OcrTiles {
             }
             if(matches.size!=1) continue
             val index=matches.single();val line=lines[index]
-            lines[index]=line.copy(left=minOf(line.left,box.left),top=minOf(line.top,box.top),
-                right=maxOf(line.right,box.right),bottom=maxOf(line.bottom,box.bottom))
+            // Detector padding is not letter height. Inflating it makes separate
+            // paragraphs merge and breaks grouping of overlapping slanted lines.
+            lines[index]=line.copy(left=minOf(line.left,box.left),right=maxOf(line.right,box.right))
         }
     }
 
@@ -293,7 +343,8 @@ internal object OcrTiles {
                 val other = existing[duplicate]
                 // A full line from the overlap can replace a fragment at a tile boundary.
                 val chosen = if ((line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) ||
-                    (line.confidence > other.confidence + .02f && line.text.length >= other.text.length * .75f)) line else other
+                    (line.confidence > other.confidence + (if(other.confidence<.65f) 0f else .02f) &&
+                        line.text.length >= other.text.length * .75f)) line else other
                 val alternatives = (listOf(other.text,line.text) + other.alternatives + line.alternatives)
                     .distinctBy { it.lowercase().replace(Regex("\\s+"), "") }
                     .filter { !it.equals(chosen.text, ignoreCase = true) && it.length in 1..512 && it.length>=chosen.text.length*.60 }.take(2)

@@ -79,7 +79,8 @@ class RealPageCleanupTest {
     }
     @Test fun touchingOutlinesAcrossTwoSlantedLinesAreRepairedTogether() {
         val source=source("joined-dialogue")
-        val lines=listOf(OcrLine("Don't let anyone",205,882,371,926),OcrLine("approach.",239,908,343,952))
+        val lines=mutableListOf(OcrLine("Don't let anyone",205,882,371,926),OcrLine("approach.",238,906,343,952))
+        com.ruyo.ai.OcrTiles.coverDetectedLettering(lines,listOf(android.graphics.Rect(189,863,386,940),android.graphics.Rect(223,895,360,967)))
         val region=requireNotNull(TextRegionRepair.selectArtwork(source,lines))
         val cleaned=clean(source,region)
         var original=0;var remaining=0
@@ -127,7 +128,8 @@ class RealPageCleanupTest {
     }
     @Test fun adjacentCommentRowsDoNotDisappearWhenOnlyTheirEmptyPaddingTouches() = runBlocking {
         val source = source("page-comments")
-        val lines = listOf(OcrLine("oo(111.222)",40,573,194,605),OcrLine("THE SMART ONES QUIT FIRST.",20,626,344,651))
+        val lines = mutableListOf(OcrLine("oo(111.222)",40,573,194,605),OcrLine("THE SMART ONES QUIT FIRST.",20,626,344,651))
+        com.ruyo.ai.OcrTiles.coverDetectedLettering(lines,listOf(android.graphics.Rect(34,565,203,610),android.graphics.Rect(17,619,348,653)))
         val areas = AutoBubbleDetector.analyze(source,lines)
         assertEquals(2,areas.size)
         val regions=areas.map { requireNotNull(it.region) { "Skipped ${it.source}" } }

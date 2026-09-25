@@ -52,6 +52,7 @@ class ComicRegressionTest {
             val started = System.nanoTime()
             val lines = withTimeout(120_000) { ocr.lines(source, OcrScript.LATIN) }
             fun json(line: OcrLine) = JSONObject().put("text", line.text).put("confidence", line.confidence).put("angle", line.angle).put("bounds", JSONArray(listOf(line.left, line.top, line.right, line.bottom)))
+                .put("alternatives",JSONArray(line.alternatives)).put("words",JSONArray().apply { line.words.forEach { put(JSONObject().put("text",it.text).put("confidence",it.confidence)) } })
             report.put("detectorBoxes",detectorBoxes).put("cropReadings",crops)
             report.put("ocr", JSONArray().apply { lines.forEach { put(json(it)) } })
             report.put("ocrMilliseconds", (System.nanoTime() - started) / 1_000_000)

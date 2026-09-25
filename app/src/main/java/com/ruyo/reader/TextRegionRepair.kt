@@ -38,7 +38,7 @@ data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val he
  */
 object TextRegionRepair {
     /** Bump when automatic masks change so saved chapters are prepared again. */
-    const val VERSION = 6
+    const val VERSION = 7
     fun groups(lines: List<OcrLine>): List<List<OcrLine>> {
         val remaining = lines.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left }).toMutableList()
         val output = mutableListOf<List<OcrLine>>()

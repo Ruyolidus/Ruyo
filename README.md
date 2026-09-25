@@ -321,7 +321,7 @@ now keeps the complete component and checks for omitted foreground pixels before
 accepting a mask. Touching outlines across a slanted paragraph are handled as one
 lettering component. These changes do not authorize repainting an entire rectangle.
 
-Prepare an existing chapter again to refresh automatic masks with cleanup engine 6.
+Prepare an existing chapter again to refresh automatic masks with cleanup engine 7.
 Saved wording and font settings are reused without another translation request for
 those edits. Unsuccessful mask upgrades stay flagged for retry. Explicitly saved manual masks remain locked. The previous edits are
 backed up separately for each cleanup engine version.
@@ -331,7 +331,9 @@ Independent detector bounds recover leading strokes clipped by recognition boxes
 Local artwork repair uses bounded color interpolation and seam relaxation instead
 of repeatedly extrapolating already reconstructed gradients, which created streaks.
 Conflicting readings retain up to two alternatives per line; ambiguous readings and
-confidence values accompany text-only translation batches. Prompts ask for natural
+confidence values accompany text-only translation batches. Conflicting bright words
+can receive a separate local crop retry (up to eight per page); only a more confident,
+small and uniquely located correction replaces the initial word. Prompts ask for natural
 comic dialogue and contextual correction of clear OCR errors while preserving names,
 ranks and model numbers. A prompt is not a guarantee of semantic accuracy, especially
 with small local models. Previously saved wording is preserved during mask refresh.

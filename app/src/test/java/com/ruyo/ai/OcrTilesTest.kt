@@ -38,6 +38,7 @@ class OcrTilesTest {
         val lines=mutableListOf(OcrLine("I CAME TO",196,407,325,441,.70f),OcrLine("NEXT LINE",109,450,396,477,.80f))
         OcrTiles.coverDetectedLettering(lines,listOf(android.graphics.Rect(169,407,331,444),android.graphics.Rect(100,403,400,480)))
         assertEquals(169,lines[0].left);assertEquals(331,lines[0].right)
+        assertEquals(407,lines[0].top);assertEquals(441,lines[0].bottom)
         assertEquals(109,lines[1].left);assertEquals(450,lines[1].top)
         assertEquals("I CAME TO",lines[0].text)
     }
@@ -47,6 +48,23 @@ class OcrTilesTest {
         assertEquals(listOf("Don't let anyone","approach."),lines.map { it.text })
         assertFalse(lines.first().alternatives.contains("approach."))
         assertFalse(lines.any { "t" in it.alternatives })
+    }
+    @Test fun wordRetryRequiresBetterConfidenceAndASmallUniqueCorrection() {
+        val word=OcrWord("TINSTINCT",30,10,130,35,.55f)
+        val line=OcrLine("GAMBLER'S TINSTINCT HAS ACTIVATED!",0,10,400,35,.81f)
+        val better=OcrLine("INSTINCT",30,10,130,35,.90f)
+        assertEquals("GAMBLER'S INSTINCT HAS ACTIVATED!",OcrTiles.correctWord(line,word,better).text)
+        assertEquals(line,OcrTiles.correctWord(line,word,better.copy(confidence=.40f)))
+        assertEquals(line,OcrTiles.correctWord(line,word,better.copy(text="DIFFERENT")))
+        assertEquals(line,OcrTiles.correctWord(line,word,better.copy(text="INSTINCT HAS")))
+        val ambiguous=line.copy(text="TINSTINCT TINSTINCT")
+        assertEquals(ambiguous,OcrTiles.correctWord(ambiguous,word,better))
+    }
+
+    @Test fun weakReadingsUseTheBetterScoreEvenWhenTheImprovementIsSmall() {
+        val lines=mutableListOf(OcrLine("agproach.",239,908,343,952,.4956597f))
+        OcrTiles.merge(lines,listOf(OcrLine("approach.",238,906,343,952,.49739584f)))
+        assertEquals("approach.",lines.single().text)
     }
     @Test fun contrastPassKeepsDarkStrokesAndDropsSmoothBackgroundShading() {
         val bitmap = Bitmap.createBitmap(100, 90, Bitmap.Config.ARGB_8888)
