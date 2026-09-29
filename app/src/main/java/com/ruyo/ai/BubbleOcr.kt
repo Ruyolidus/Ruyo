@@ -341,8 +341,11 @@ internal object OcrTiles {
             if (duplicate < 0) existing += line
             else {
                 val other = existing[duplicate]
-                // A full line from the overlap can replace a fragment at a tile boundary.
-                val chosen = if ((line.text.contains(other.text, ignoreCase = true) && line.text.length > other.text.length) ||
+                // A full line can replace a tile-edge fragment. Extra punctuation
+                // alone (often a balloon curve read as a dash) is not more content.
+                val extendsContent = line.text.contains(other.text, ignoreCase = true) &&
+                    line.text.count { it.isLetterOrDigit() } > other.text.count { it.isLetterOrDigit() }
+                val chosen = if (extendsContent ||
                     (line.confidence > other.confidence + (if(other.confidence<.65f) 0f else .02f) &&
                         line.text.length >= other.text.length * .75f)) line else other
                 val alternatives = (listOf(other.text,line.text) + other.alternatives + line.alternatives)

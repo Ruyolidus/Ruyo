@@ -301,6 +301,38 @@ class AppFlowTest {
         assertTrue(model.draft!!.edit.region.inpaint)
     }
 
+    @Test fun providerTimeoutCanBeSavedReopenedAndChangedThroughTheScreen() {
+        val profiles = TestProfiles()
+        val model = RuyoModel(context, profiles)
+        compose.setContent { RuyoApp(model) }
+        awaitTag("book-sample")
+        compose.runOnIdle { model.editProfiles() }
+        awaitTag("provider-profiles")
+        compose.onNodeWithTag("add-provider").performScrollTo().performClick()
+        awaitTag("provider-form")
+        compose.onNodeWithTag("provider-name").performScrollTo().performTextInput("Slow model")
+        compose.onNodeWithTag("provider-model").performScrollTo().performTextInput("test-model")
+        compose.onNodeWithTag("provider-form").performScrollToNode(hasTestTag("provider-timeout"))
+        compose.onNodeWithTag("provider-timeout").assertTextContains("10 minutes").performClick()
+        compose.onNodeWithTag("provider-timeout-UNLIMITED").performClick()
+        capture("provider-timeout-unlimited")
+        compose.onNodeWithTag("provider-form").performScrollToNode(hasTestTag("provider-key"))
+        compose.onNodeWithTag("provider-key").performTextInput("fixture-only")
+        compose.onNodeWithTag("provider-form").performScrollToNode(hasTestTag("save-provider"))
+        compose.onNodeWithTag("save-provider").performClick()
+        awaitTag("provider-profiles"); awaitState { !model.busy }
+        assertEquals(RequestTimeout.UNLIMITED, profiles.list().last().requestTimeout)
+        compose.onAllNodesWithText("Edit")[1].performClick()
+        awaitTag("provider-form")
+        compose.onNodeWithTag("provider-form").performScrollToNode(hasTestTag("provider-timeout"))
+        compose.onNodeWithTag("provider-timeout").assertTextContains("No limit").performClick()
+        compose.onNodeWithTag("provider-timeout-FIVE_MINUTES").performClick()
+        compose.onNodeWithTag("provider-form").performScrollToNode(hasTestTag("save-provider"))
+        compose.onNodeWithTag("save-provider").performClick()
+        awaitTag("provider-profiles"); awaitState { !model.busy }
+        assertEquals(RequestTimeout.FIVE_MINUTES, profiles.list().last().requestTimeout)
+    }
+
     @Test fun recognizedTextTranslatesPreviewsAndSavesWithoutLosingTheEditor() {
         val source = SampleChapter.build().first().original
         val store = LocalBookStore(context); val book = store.addBitmap("AI test", source)

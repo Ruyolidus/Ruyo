@@ -38,7 +38,7 @@ data class BackgroundSurface(val left: Int, val top: Int, val width: Int, val he
  */
 object TextRegionRepair {
     /** Bump when automatic masks change so saved chapters are prepared again. */
-    const val VERSION = 7
+    const val VERSION = 8
     fun groups(lines: List<OcrLine>): List<List<OcrLine>> {
         val remaining = lines.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left }).toMutableList()
         val output = mutableListOf<List<OcrLine>>()
@@ -101,8 +101,11 @@ object TextRegionRepair {
             if (denominator == 0) return false
             val c=pixels[i]
             val alpha=((Color.red(c)-Color.red(background))*dr+(Color.green(c)-Color.green(background))*dg+(Color.blue(c)-Color.blue(background))*db).toDouble()/denominator
-            val mixed=Color.rgb((Color.red(background)+dr*alpha.coerceIn(0.0,1.0)).roundToInt(),
-                (Color.green(background)+dg*alpha.coerceIn(0.0,1.0)).roundToInt(),(Color.blue(background)+db*alpha.coerceIn(0.0,1.0)).roundToInt())
+            // A boundary sample may be only the pale antialias of a dark curve.
+            // Follow that same color direction into its darker core as well.
+            fun channel(backgroundChannel: Int, delta: Int) =
+                (backgroundChannel + delta * alpha.coerceAtLeast(0.0)).roundToInt().coerceIn(0,255)
+            val mixed=Color.rgb(channel(Color.red(background),dr),channel(Color.green(background),dg),channel(Color.blue(background),db))
             return distance(c,mixed)<=14
         }
         var head = 0; var tail = 0

@@ -25,6 +25,13 @@ class OcrTilesTest {
         assertEquals(listOf("GAMBLER", "Next"), found.map { it.text })
         assertEquals(listOf("GAIVBLER"), found.first().alternatives)
     }
+    @Test fun aCurveReadAsExtraPunctuationDoesNotOverrideTheClearerWord() {
+        val found = mutableListOf(OcrLine("GIGGLE",249,86,454,202,.5989583f))
+        OcrTiles.merge(found,listOf(OcrLine("-GIGGLE",206,77,454,207,.45982143f)))
+        assertEquals("GIGGLE",found.single().text)
+        assertEquals(249,found.single().left)
+        assertEquals(listOf("-GIGGLE"),found.single().alternatives)
+    }
     @Test fun confidentButConflictingOcrKeepsTheAlternativeForTranslation() {
         val found=mutableListOf(OcrLine("ID PUT HIM",20,20,180,60,.85f))
         OcrTiles.merge(found,listOf(OcrLine("I'D PUT HIM",20,20,180,60,.70f)))

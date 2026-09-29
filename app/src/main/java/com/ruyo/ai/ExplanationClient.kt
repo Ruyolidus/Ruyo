@@ -3,7 +3,6 @@ package com.ruyo.ai
 import android.content.Context
 import android.util.AtomicFile
 import com.ruyo.reader.TextLanguages
-import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -24,7 +23,7 @@ fun interface ExplanationService {
 class ExplanationClient(private val client: TranslationClient = TranslationClient()) : ExplanationService {
     override suspend fun explain(secret: ProviderSecret, text: String, language: String): AiLesson {
         val request = request(secret, text, language)
-        val response = withTimeout(65_000) { client.post(request) }
+        val response = client.post(request)
         try { return decode(TranslationClient.objectContent(secret.profile.kind, response)) }
         catch (_: Exception) { throw TranslationFailure("The model returned an incomplete lesson. Retry or choose another model.") }
     }

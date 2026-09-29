@@ -65,6 +65,8 @@ private fun ProviderForm(model: RuyoModel, previous: ProviderProfile?, onDone: (
     var kind by remember(previous?.id) { mutableStateOf(previous?.kind ?: ProviderKind.OPENAI) }
     var endpoint by remember(previous?.id) { mutableStateOf(previous?.baseUrl ?: ProviderKind.OPENAI.endpoint) }
     var modelId by remember(previous?.id) { mutableStateOf(previous?.model ?: "") }
+    var requestTimeout by remember(previous?.id) { mutableStateOf(previous?.requestTimeout ?: RequestTimeout.DEFAULT) }
+    var timeoutMenu by remember { mutableStateOf(false) }
     // Deliberately never Saveable: entered keys are neither persisted nor restored as UI state.
     var apiKey by remember(previous?.id) { mutableStateOf("") }
     var removeKey by remember(previous?.id) { mutableStateOf(false) }
@@ -95,6 +97,25 @@ private fun ProviderForm(model: RuyoModel, previous: ProviderProfile?, onDone: (
                 supportingText = { Text("Enter a text or chat model ID from your provider.") }, modifier = Modifier.fillMaxWidth().testTag("provider-model"))
         }
         item {
+            Text("Request timeout", style = MaterialTheme.typography.labelLarge)
+            Box {
+                OutlinedButton(onClick = { timeoutMenu = true }, enabled = !model.busy,
+                    modifier = Modifier.fillMaxWidth().testTag("provider-timeout")) { Text(requestTimeout.label) }
+                DropdownMenu(timeoutMenu, { timeoutMenu = false }) {
+                    RequestTimeout.entries.forEach { option ->
+                        DropdownMenuItem(text = { Text(option.label) }, onClick = { requestTimeout = option; timeoutMenu = false },
+                            modifier = Modifier.testTag("provider-timeout-${option.name}"))
+                    }
+                }
+            }
+            Text(if (requestTimeout == RequestTimeout.UNLIMITED)
+                "Wait for each translation or explanation until you cancel. Your server may still enforce its own time limit."
+                else "Time allowed for each translation or explanation, including model loading. Increase this for slower local models.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Connecting to the server has a separate 30-second limit.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
             OutlinedTextField(apiKey, { apiKey = it.take(4096); removeKey = false }, label = { Text(if (previous?.hasKey == true) "Replacement API key" else "API key") }, singleLine = true, enabled = !model.busy,
                 visualTransformation = PasswordVisualTransformation(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrectEnabled = false),
                 supportingText = { Text(if (previous?.hasKey == true) "Leave blank to keep the saved key. Re-enter it if changing the provider or address." else if (kind == ProviderKind.COMPATIBLE) "Optional only when your server allows requests without a key." else "Stored with Android Keystore encryption.") },
@@ -106,7 +127,7 @@ private fun ProviderForm(model: RuyoModel, previous: ProviderProfile?, onDone: (
         model.profileError?.let { error -> item { Text(error, color = MaterialTheme.colorScheme.error) } }
         item {
             Button(onClick = {
-                val profile = ProviderProfile(id = previous?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim(), kind = kind, baseUrl = endpoint.trim(), model = modelId.trim())
+                val profile = ProviderProfile(id = previous?.id ?: java.util.UUID.randomUUID().toString(), name = name.trim(), kind = kind, baseUrl = endpoint.trim(), model = modelId.trim(), requestTimeout = requestTimeout)
                 model.saveProfile(profile, apiKey.takeIf { it.isNotBlank() }, removeKey) { apiKey = ""; onDone() }
             }, enabled = !model.busy && name.isNotBlank() && endpoint.isNotBlank() && modelId.isNotBlank(), modifier = Modifier.fillMaxWidth().testTag("save-provider")) { Text("Save profile") }
             TextButton(onClick = { apiKey = ""; onDone() }, enabled = !model.busy, modifier = Modifier.fillMaxWidth()) { Text("Cancel") }

@@ -32,7 +32,8 @@ class ProviderTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val file = File(context.cacheDir, "vault-test-" + java.util.UUID.randomUUID())
         val key = SecretKeySpec(ByteArray(32) { (it + 1).toByte() }, "AES")
-        val first = profile(); val second = profile(ProviderKind.CLAUDE)
+        val first = profile().copy(requestTimeout = RequestTimeout.FIVE_MINUTES)
+        val second = profile(ProviderKind.CLAUDE).copy(requestTimeout = RequestTimeout.UNLIMITED)
         try {
             val store = EncryptedProfileStore(file) { key }
             store.save(first, testKey); store.save(second, "second-fixture-key")
@@ -41,6 +42,8 @@ class ProviderTest {
             val reopened = EncryptedProfileStore(file) { key }
             assertEquals(2, reopened.list().size)
             assertEquals(testKey, reopened.get(first.id).apiKey)
+            assertEquals(RequestTimeout.FIVE_MINUTES, reopened.get(first.id).profile.requestTimeout)
+            assertEquals(RequestTimeout.UNLIMITED, reopened.get(second.id).profile.requestTimeout)
             assertFalse(reopened.get(first.id).toString().contains(testKey))
             reopened.save(first.copy(name = "Renamed"), null)
             assertEquals(testKey, reopened.get(first.id).apiKey)
@@ -53,6 +56,30 @@ class ProviderTest {
             assertTrue(runCatching { reopened.list() }.isFailure)
             assertTrue(runCatching { reopened.save(first, testKey) }.isFailure)
             assertArrayEquals(corrupted, file.readBytes())
+        } finally { file.delete() }
+    }
+
+    @Test fun oldVaultProfilesGainTheLongerDefaultWithoutLosingTheirKey() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val file = File(context.cacheDir, "legacy-vault-" + java.util.UUID.randomUUID())
+        val key = SecretKeySpec(ByteArray(32) { (it + 1).toByte() }, "AES")
+        val profile = profile(ProviderKind.COMPATIBLE)
+        // The exact v1 JSON schema from before requestTimeout was introduced.
+        val legacy = JSONArray().put(JSONObject().put("id", profile.id).put("name", profile.name)
+            .put("kind", profile.kind.name).put("url", profile.baseUrl).put("model", profile.model).put("key", testKey))
+        val cipher = javax.crypto.Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(javax.crypto.Cipher.ENCRYPT_MODE, key)
+        cipher.updateAAD("com.ruyo.providers.v1".toByteArray())
+        file.writeBytes(byteArrayOf(1) + cipher.iv + cipher.doFinal(legacy.toString().toByteArray()))
+        try {
+            val store = EncryptedProfileStore(file) { key }
+            val restored = store.get(profile.id)
+            assertEquals(testKey, restored.apiKey)
+            assertEquals(RequestTimeout.TEN_MINUTES, restored.profile.requestTimeout)
+            store.save(restored.profile.copy(requestTimeout = RequestTimeout.UNLIMITED), null)
+            val reopened = EncryptedProfileStore(file) { key }.get(profile.id)
+            assertEquals(testKey, reopened.apiKey)
+            assertEquals(RequestTimeout.UNLIMITED, reopened.profile.requestTimeout)
         } finally { file.delete() }
     }
 

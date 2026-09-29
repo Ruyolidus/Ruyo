@@ -17,7 +17,7 @@ separate app from the original `com.ruyolidus.ruyo.debug` preview.
   Recognition is confined to the selected area; users can correct the source text.
 - Named AI profiles for OpenAI, OpenAI-compatible APIs (including DeepSeek and
   compatible local servers), Claude, and Gemini. Each profile has its own model ID,
-  endpoint, and optional server key where supported.
+  endpoint, request timeout, and optional server key where supported.
 - API credentials and profile metadata are AES-GCM encrypted with an Android
   Keystore key in the app's no-backup storage. Calls go directly to the configured
   endpoint; keys never enter the website or comic storage.
@@ -143,7 +143,14 @@ uncached AI lesson does. Only dialogue text goes to the provider. Comic images a
 credentials never enter each other's storage or the WebView. Batches contain up to
 four dialogue areas and 6000 source characters, with validated IDs and full text.
 There are no automatic paid retries. Each request permits at most 4096 output
-tokens, a 128 KiB response, and a 65-second timeout. HTTP is restricted to localhost
+tokens and a 128 KiB response. **Settings → Manage AI providers → Edit → Request
+timeout** controls the total time for each translation batch or explanation:
+2, 5, 10 (default), or 30 minutes, or **No limit**. The same setting controls the
+network read timeout; there is no separate 30- or 65-second response cutoff.
+Existing profiles gain the 10-minute default while keeping their encrypted keys.
+No limit waits until completion or cancellation; connection setup still has a
+separate 30-second limit, and the provider/proxy can impose its own server limits.
+Cancelling disconnects the request without an automatic retry. HTTP is restricted to localhost
 and 127.0.0.1 for on-phone servers; other endpoints require HTTPS. Local inference
 requires a separate compatible server; it is not bundled into Ruyo.
 
@@ -321,7 +328,7 @@ now keeps the complete component and checks for omitted foreground pixels before
 accepting a mask. Touching outlines across a slanted paragraph are handled as one
 lettering component. These changes do not authorize repainting an entire rectangle.
 
-Prepare an existing chapter again to refresh automatic masks with cleanup engine 7.
+Prepare an existing chapter again to refresh automatic masks with cleanup engine 8.
 Saved wording and font settings are reused without another translation request for
 those edits. Unsuccessful mask upgrades stay flagged for retry. Explicitly saved manual masks remain locked. The previous edits are
 backed up separately for each cleanup engine version.
@@ -344,3 +351,11 @@ border preservation. Fixed Japanese text in renderer fixtures does not test a pa
 provider. Recognizing stylized Korean effects still requires the Korean source script;
 selecting Latin does not automatically enable mixed-script OCR. The local artwork
 repair remains approximate and cannot recover detailed art hidden by lettering.
+
+Border protection follows pale antialias pixels into the darker core of the same
+curve, so a larger OCR crop cannot silently erase a balloon outline beside colored
+effects. Extra punctuation alone no longer overrides a more confident OCR reading.
+Tests cover the actual device OCR bounds as well as the manually specified crops.
+Slow-provider tests use virtual time to accept 90-second single, batch and lesson
+responses, enforce selected deadlines, and verify cancellation after an unlimited
+wait. They use fake HTTP responses and do not measure real provider latency.

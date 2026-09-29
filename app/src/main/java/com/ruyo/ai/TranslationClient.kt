@@ -3,7 +3,7 @@ package com.ruyo.ai
 import com.ruyo.reader.TextLanguages
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -15,7 +15,8 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.EmptyCoroutineContext
 
 class TranslationFailure(message: String) : Exception(message)
-class ProviderRequest(val url: String, val headers: Map<String, String>, val body: String) {
+class ProviderRequest(val url: String, val headers: Map<String, String>, val body: String,
+    val timeout: RequestTimeout = RequestTimeout.DEFAULT) {
     override fun toString() = "ProviderRequest(redacted)"
 }
 data class SourceDialogue(val id: String, val text: String, val readings: List<OcrLine> = emptyList())
@@ -29,14 +30,20 @@ fun interface TranslationService {
 class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }) : TranslationService {
     override suspend fun translate(secret: ProviderSecret, source: String, target: String): String {
         val request = request(secret, source, target)
-        val response = withTimeout(65_000) { post(request) }
+        val response = post(request)
         return parse(secret.profile.kind, response)
     }
     override suspend fun translateBatch(secret: ProviderSecret, sources: List<SourceDialogue>, target: String): Map<String, String> {
         val request = batchRequest(secret, sources, target)
-        return parseBatch(secret.profile.kind, withTimeout(65_000) { post(request) }, sources.map { it.id }.toSet())
+        return parseBatch(secret.profile.kind, post(request), sources.map { it.id }.toSet())
     }
-    internal suspend fun post(request: ProviderRequest): String = suspendCancellableCoroutine { continuation ->
+    internal suspend fun post(request: ProviderRequest): String {
+        if (request.timeout == RequestTimeout.UNLIMITED) return exchange(request)
+        // This catches only our deadline. User/parent cancellation still propagates.
+        return withTimeoutOrNull(request.timeout.millis.toLong()) { exchange(request) }
+            ?: throw TranslationFailure("No complete response within ${request.timeout.label}. Increase Request timeout in this provider's profile, or choose No limit for a slow local model.")
+    }
+    private suspend fun exchange(request: ProviderRequest): String = suspendCancellableCoroutine { continuation ->
         val connection = AtomicReference<HttpURLConnection?>()
         continuation.invokeOnCancellation { connection.getAndSet(null)?.disconnect() }
         Dispatchers.IO.dispatch(EmptyCoroutineContext, Runnable {
@@ -46,7 +53,10 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
                 try {
                     if (!continuation.isActive) throw TranslationFailure("Request cancelled.")
                     http.instanceFollowRedirects = false
-                    http.requestMethod = "POST"; http.connectTimeout = 15_000; http.readTimeout = 30_000
+                    http.requestMethod = "POST"
+                    // Connecting to a server is separate from waiting for model loading/generation.
+                    http.connectTimeout = 30_000
+                    http.readTimeout = request.timeout.millis
                     http.useCaches = false; http.doOutput = true
                     http.setRequestProperty("Content-Type", "application/json; charset=utf-8")
                     http.setRequestProperty("Accept", "application/json")
@@ -59,6 +69,7 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
                         in 300..399 -> "The endpoint redirected this request. Enter its final API base URL; no key was forwarded."
                         401, 403 -> "The provider rejected this key or model access. Check the profile."
                         429 -> "The provider's quota or rate limit was reached. Retry later or switch profiles."
+                        408, 504 -> "The provider or its proxy timed out. Its server time limits are separate from Ruyo's Request timeout setting."
                         400, 404, 422 -> "The provider could not accept this model or request. Check the API format, model ID, and base URL."
                         else -> "The provider is unavailable (HTTP " + status + "). Please try again later."
                     })
@@ -76,7 +87,7 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
             }.recoverCatching { error ->
                 throw when (error) {
                     is TranslationFailure -> error
-                    is SocketTimeoutException -> TranslationFailure("The provider timed out. You can retry or choose another profile.")
+                    is SocketTimeoutException -> TranslationFailure("The connection to the provider timed out. Check that the server is reachable. For slow responses, increase Request timeout in the provider's profile.")
                     else -> TranslationFailure("Could not connect securely to the provider. Check the address and your connection.")
                 }
             }
@@ -154,7 +165,7 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
                     path = "/models/" + profile.model.removePrefix("models/") + ":generateContent"
                 }
             }
-            return ProviderRequest(base + path, headers, body.toString())
+            return ProviderRequest(base + path, headers, body.toString(), profile.requestTimeout)
         }
         internal fun objectContent(kind: ProviderKind, response: String): JSONObject {
                 val root = JSONObject(response)

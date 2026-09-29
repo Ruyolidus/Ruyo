@@ -22,8 +22,20 @@ enum class ProviderKind(val label: String, val endpoint: String) {
     GEMINI("Gemini", "https://generativelanguage.googleapis.com/v1beta"),
 }
 
+/** Per request, not per chapter. Zero explicitly means wait until cancelled. */
+enum class RequestTimeout(val label: String, val millis: Int) {
+    TWO_MINUTES("2 minutes", 120_000),
+    FIVE_MINUTES("5 minutes", 300_000),
+    TEN_MINUTES("10 minutes", 600_000),
+    THIRTY_MINUTES("30 minutes", 1_800_000),
+    UNLIMITED("No limit", 0);
+
+    companion object { val DEFAULT = TEN_MINUTES }
+}
+
 data class ProviderProfile(val id: String = UUID.randomUUID().toString(), val name: String,
-    val kind: ProviderKind, val baseUrl: String, val model: String, val hasKey: Boolean = false) {
+    val kind: ProviderKind, val baseUrl: String, val model: String, val hasKey: Boolean = false,
+    val requestTimeout: RequestTimeout = RequestTimeout.DEFAULT) {
     fun validate(): ProviderProfile {
         require(runCatching { UUID.fromString(id) }.isSuccess) { "Invalid profile ID." }
         require(name.isNotBlank() && name.length <= 60) { "Use a profile name of 1–60 characters." }
@@ -88,13 +100,15 @@ class EncryptedProfileStore(private val file: File, private val key: () -> Secre
             require(array.length() <= 24)
             return (0 until array.length()).map { i ->
                 val obj = array.getJSONObject(i); val secret = obj.getString("key")
-                ProviderSecret(ProviderProfile(obj.getString("id"), obj.getString("name"), ProviderKind.valueOf(obj.getString("kind")), obj.getString("url"), obj.getString("model"), secret.isNotEmpty()).validate(), secret)
+                val timeout = RequestTimeout.entries.firstOrNull { it.name == obj.optString("requestTimeout") } ?: RequestTimeout.DEFAULT
+                ProviderSecret(ProviderProfile(obj.getString("id"), obj.getString("name"), ProviderKind.valueOf(obj.getString("kind")), obj.getString("url"), obj.getString("model"), secret.isNotEmpty(), timeout).validate(), secret)
             }
         } catch (_: Exception) { throw IllegalStateException("The encrypted provider store could not be opened. Your saved data has not been replaced.") }
     }
     private fun write(entries: List<ProviderSecret>) {
         val plaintext = JSONArray().apply { entries.forEach { e -> put(JSONObject().put("id", e.profile.id).put("name", e.profile.name)
-            .put("kind", e.profile.kind.name).put("url", e.profile.baseUrl).put("model", e.profile.model).put("key", e.apiKey)) } }.toString().toByteArray(Charsets.UTF_8)
+            .put("kind", e.profile.kind.name).put("url", e.profile.baseUrl).put("model", e.profile.model).put("key", e.apiKey)
+            .put("requestTimeout", e.profile.requestTimeout.name)) } }.toString().toByteArray(Charsets.UTF_8)
         try {
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key())

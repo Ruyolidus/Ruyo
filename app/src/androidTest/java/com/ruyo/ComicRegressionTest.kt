@@ -73,6 +73,16 @@ class ComicRegressionTest {
             val rendered = BubbleEditRenderer.composite(source, edits)
             File(directory, "$name-original.png").outputStream().use { source.compress(Bitmap.CompressFormat.PNG, 100, it) }
             File(directory, "$name-cleanup.png").outputStream().use { rendered.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            if (name == "pale-dialogue") {
+                var changedCurve = 0
+                for (y in 110..220) for (x in 150..249) {
+                    val pixel = source.getPixel(x,y)
+                    val r=android.graphics.Color.red(pixel);val g=android.graphics.Color.green(pixel);val b=android.graphics.Color.blue(pixel)
+                    if(r<210 && maxOf(r,g,b)-minOf(r,g,b)<=8 && rendered.getPixel(x,y)!=pixel) changedCurve++
+                }
+                report.put("changedCurvePixels",changedCurve)
+                assertTrue("Effect cleanup erased $changedCurve balloon-curve pixels",changedCurve==0)
+            }
             rendered.recycle()
             val recognized = normalized(lines.joinToString(" ") { it.text })
             val accepted = normalized(candidates.joinToString(" ") { it.source })

@@ -95,7 +95,9 @@ class RealPageCleanupTest {
     }
     @Test fun brownEffectRemovesSolidLetterCentersAndPreservesTheBlackBalloonLine() {
         val source = source("pale-dialogue")
-        val line = OcrLine("GIGGLE",230,77,454,209)
+        // Actual device OCR included a curve mistaken for a leading dash. The
+        // enlarged crop meets pale antialias pixels before the curve's dark core.
+        val line = OcrLine("-GIGGLE",206,77,481,207)
         val region = requireNotNull(TextRegionRepair.select(source,listOf(line)))
         assertFalse("A white background must not be rebuilt from remaining brown ink",region.inpaint)
         val result = clean(source,region)
@@ -107,6 +109,17 @@ class RealPageCleanupTest {
         }
         assertTrue("Brown source ink remains: $remaining / $original", remaining < original * .02)
         assertEquals(source.getPixel(218,126),result.getPixel(218,126))
+        var borderPixels = 0
+        for (y in 110..220) for (x in 150..249) {
+            val originalPixel = source.getPixel(x,y)
+            if (Color.red(originalPixel) < 210 &&
+                maxOf(Color.red(originalPixel),Color.green(originalPixel),Color.blue(originalPixel)) -
+                    minOf(Color.red(originalPixel),Color.green(originalPixel),Color.blue(originalPixel)) <= 8) {
+                borderPixels++
+                assertEquals("The bubble curve was erased at $x,$y", originalPixel, result.getPixel(x,y))
+            }
+        }
+        assertTrue("Fixture must contain the bubble curve",borderPixels > 100)
         preview("effect",result); result.recycle(); source.recycle()
     }
     @Test fun italicCaptionLeadingStrokeOutsideTheOcrBoxIsAlsoRemoved() {
