@@ -644,6 +644,9 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun showLesson(line: SavedLine) {
         closeLesson(); lesson = line
+        // Reopening the same line can be coalesced into one Compose frame. Start
+        // from the selection event too, rather than relying on a changed UI key.
+        if (foreground) explainLesson()
     }
     fun closeLesson() {
         cancelExplanation(); lesson = null; explanation = null; explanationError = null
