@@ -1,0 +1,17 @@
+#!/bin/sh
+set -eu
+project_root=$(git rev-parse --show-toplevel)
+"$project_root/scripts/check-branch.sh"
+
+case "${2:-}" in
+    https://github.com/Ruyolidus/Ruyo.git|https://github.com/Ruyolidus/Ruyo|git@github.com:Ruyolidus/Ruyo.git|ssh://git@github.com/Ruyolidus/Ruyo.git) ;;
+    *) echo "Pushes for this project must target Ruyolidus/Ruyo." >&2; exit 1 ;;
+esac
+
+allowed_ref=refs/heads/multiplayer-bridge
+while read -r local_ref local_oid remote_ref remote_oid; do
+    if [ "$local_ref" != "$allowed_ref" ] || [ "$remote_ref" != "$allowed_ref" ]; then
+        echo "Only multiplayer-bridge may be pushed. Other branches, tags, and deletions are rejected." >&2
+        exit 1
+    fi
+done

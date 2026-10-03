@@ -1,12 +1,21 @@
-.gradle/
-.kotlin/
-.idea/
-**/build/
+# Local configuration and credentials
 local.properties
-*.iml
-*.hprof
-.DS_Store
-*.apk
-*.aab
+.env
+.env.*
+!.env.example
 *.jks
 *.keystore
+
+# Build outputs and IDE state
+.gradle/
+.kotlin/
+**/build/
+.idea/
+*.iml
+.DS_Store
+
+# User-supplied games and generated packages
+*.apk
+*.apks
+*.aab
+*.obb
