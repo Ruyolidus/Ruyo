@@ -691,15 +691,26 @@ class RuyoModel @JvmOverloads constructor(application: Application,
                 val cached = if (force) null else withContext(Dispatchers.IO) { lessonCache.read(key) }
                 val value = cached ?: run {
                     val secret = withContext(Dispatchers.IO) { profileStore.get(profile.id) }
-                    explanationService.explain(secret, line.japanese, line.languageTag, preferences)
+                    val prior = explanation
+                    if (force && prior != null) explanationService.complete(secret, line.japanese, line.languageTag, preferences, prior)
+                    else explanationService.explain(secret, line.japanese, line.languageTag, preferences)
                 }
                 ensureActive()
                 if (generation != lessonGeneration || lesson != line || activeProfileId != profile.id) return@launch
                 val old = explanation
-                val merged = if (old == null) value else value.copy(
+                var merged = if (old == null) value else value.copy(
                     reading = value.reading.ifBlank { old.reading }, chunks = value.chunks.ifEmpty { old.chunks },
                     grammar = value.grammar.ifEmpty { old.grammar }, vocabulary = value.vocabulary.ifEmpty { old.vocabulary },
                     examples = value.examples.ifEmpty { old.examples }, exercises = value.exercises.ifEmpty { old.exercises })
+                merged = merged.copy(missingSections = merged.missingSections.filter { section -> when (section) {
+                    "reading" -> merged.reading.isBlank()
+                    "chunks" -> merged.chunks.isEmpty()
+                    "grammar" -> merged.grammar.isEmpty()
+                    "vocabulary" -> merged.vocabulary.isEmpty()
+                    "examples" -> merged.examples.isEmpty()
+                    "exercises" -> merged.exercises.isEmpty()
+                    else -> true
+                } })
                 explanation = merged
                 if (cached == null) withContext(Dispatchers.IO) { runCatching { lessonCache.write(key, merged) } }
             } catch (_: TimeoutCancellationException) {

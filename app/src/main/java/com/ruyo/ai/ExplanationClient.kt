@@ -25,6 +25,7 @@ data class LessonPreferences(val level: LearnerLevel = LearnerLevel.BEGINNER, va
 fun interface ExplanationService {
     suspend fun explain(secret: ProviderSecret, text: String, language: String): AiLesson
     suspend fun explain(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences): AiLesson = explain(secret, text, language)
+    suspend fun complete(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences, existing: AiLesson): AiLesson = explain(secret, text, language, preferences)
     suspend fun practice(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences): LessonPractice =
         explain(secret, text, language, preferences).let { LessonPractice(it.examples, it.exercises) }
 }
@@ -38,6 +39,19 @@ class ExplanationClient(private val client: TranslationClient = TranslationClien
         catch (error: TranslationFailure) { throw error }
         catch (_: Exception) { throw TranslationFailure("The provider did not return a readable meaning. Your line is still available; retry the explanation.") }
     }
+    override suspend fun complete(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences, existing: AiLesson): AiLesson {
+        val sections = existing.missingSections.filter { it in setOf("reading", "chunks", "grammar", "vocabulary") }.toSet()
+        if (sections.isEmpty()) return explain(secret, text, language, preferences)
+        val response = client.post(request(secret, text, language, preferences, sections = sections))
+        return try {
+            val fields = TranslationClient.objectContent(secret.profile.kind, response, allowPartial = true)
+            val combined = encode(existing).apply { remove("missingSections") }
+            for (key in sections) if (fields.has(key)) combined.put(key, fields.get(key))
+            if (fields.optBoolean("responseTruncated")) combined.put("responseTruncated", true)
+            decode(combined, text)
+        } catch (error: TranslationFailure) { throw error }
+        catch (_: Exception) { throw TranslationFailure("Those details could not be completed. Your existing explanation is still available.") }
+    }
     override suspend fun practice(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences): LessonPractice {
         val response = client.post(request(secret, text, language, preferences, practice = true))
         val lesson = try { decode(TranslationClient.objectContent(secret.profile.kind, response, allowPartial = true).put("meaning", "Practice")) }
@@ -47,7 +61,7 @@ class ExplanationClient(private val client: TranslationClient = TranslationClien
         return LessonPractice(lesson.examples, lesson.exercises)
     }
     companion object {
-        fun request(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences = LessonPreferences(), practice: Boolean = false): ProviderRequest {
+        fun request(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences = LessonPreferences(), practice: Boolean = false, sections: Set<String> = emptySet()): ProviderRequest {
             require(text.isNotBlank() && text.length <= 512)
             val tag = TextLanguages.normalize(language)
             val shared = "You are a warm, clear reading companion helping someone enjoy a comic. Explain what this character means first. " +
@@ -75,7 +89,8 @@ class ExplanationClient(private val client: TranslationClient = TranslationClien
             val input = JSONObject().put("dialogue", text).put("language", tag)
                 .put("learnerLevel", preferences.level.name).put("explanationLanguage", TextLanguages.normalize(preferences.explanationLanguage))
                 .put("sourceText", preferences.sourceText.take(512))
-            return TranslationClient.envelope(secret, instruction, input.toString())
+            val retry = if (sections.isEmpty()) "" else " This is a follow-up for missing reading help. Return ONLY these JSON fields: ${sections.sorted().joinToString(", ")}. Omit all other fields; they are already saved."
+            return TranslationClient.envelope(secret, instruction + retry, input.toString())
         }
         internal fun decode(root: JSONObject, expectedText: String? = null): AiLesson {
             fun field(item: JSONObject, key: String, limit: Int = 512, empty: Boolean = false): String {

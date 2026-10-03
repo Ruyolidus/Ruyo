@@ -545,6 +545,39 @@ class AppFlowTest {
         source.recycle()
     }
 
+    @Test fun practiceIsOptionalAndItsFailureKeepsTheExplanationAndCache() {
+        var explanations = 0; var practices = 0
+        val word = LessonWord("Hello", "hello", "a greeting", "")
+        val core = AiLesson("A greeting.", "hello", listOf(LessonPoint("Hello", "A friendly greeting.")), listOf(word), emptyList(), emptyList(), chunks = listOf(word))
+        val service = object : ExplanationService {
+            override suspend fun explain(secret: ProviderSecret, text: String, language: String): AiLesson { explanations++; return core }
+            override suspend fun practice(secret: ProviderSecret, text: String, language: String, preferences: LessonPreferences): LessonPractice {
+                practices++
+                if (practices == 1) throw TranslationFailure("Practice was interrupted.")
+                return LessonPractice(listOf(LessonExample("Hello!", "hello", "hello", "Say hello to a friend.", listOf(word))),
+                    listOf(LessonExercise("Greet a friend.", "Hello!", "Hello is a greeting.", "Hello means a greeting; Bye is a farewell; Thanks expresses gratitude.", "hello", listOf("Hello!", "Bye!", "Thanks!"))))
+            }
+        }
+        val model = RuyoModel(context, TestProfiles(), explanationService = service)
+        compose.setContent { RuyoApp(model) }; awaitTag("book-sample")
+        val line = com.ruyo.data.SavedLine("optional-practice", "Hello!", "Fixture", languageTag = "en", originalText = "Bonjour !")
+        compose.runOnIdle { model.showLesson(line) }; awaitState { model.explanation != null && !model.explanationBusy }
+        assertEquals(1, explanations); assertEquals(0, practices)
+        compose.onNodeWithText("Practice").performClick(); assertEquals(0, practices)
+        compose.onNodeWithTag("load-practice").performClick(); awaitState { model.practiceError != null && !model.practiceBusy }
+        assertEquals(core.meaning, model.explanation!!.meaning)
+        compose.onNodeWithTag("load-practice").performClick(); awaitState { model.explanation!!.exercises.isNotEmpty() && !model.practiceBusy }
+        assertEquals(2, practices); assertEquals(1, explanations)
+        compose.runOnIdle { model.closeLesson(); model.showLesson(line) }
+        awaitState { model.explanation != null && !model.explanationBusy }
+        assertEquals(1, explanations); assertEquals(2, practices)
+        compose.runOnIdle { model.changeLearnerLevel(LearnerLevel.N4) }
+        awaitState { explanations == 2 && !model.explanationBusy }
+        assertEquals(LearnerLevel.N4, model.learnerLevel)
+        assertEquals("N4", context.getSharedPreferences("settings", 0).getString("learnerLevel", ""))
+        compose.runOnIdle { model.closeLesson() }
+    }
+
     @Test fun closingALessonRejectsALateExplanationAndDoesNotCacheIt() {
         val release = CompletableDeferred<Unit>(); val entered = AtomicBoolean(); val returned = AtomicBoolean()
         var calls = 0

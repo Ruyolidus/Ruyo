@@ -22,6 +22,30 @@ import java.util.UUID
 
 @RunWith(AndroidJUnit4::class)
 class DeviceServicesTest {
+    @Test fun nativeArtworkRepairRunsOnAndroidAndOnlyChangesItsMask() {
+        val w = 240; val h = 180
+        val original = IntArray(w * h) { i -> if (i / w < 80 + 24 * kotlin.math.sin(i % w * .035)) Color.rgb(225, 130, 35) else Color.rgb(35, 45, 65) }
+        val mask = BooleanArray(w * h) { i -> i % w in 75..81 && i / w in 30..135 }
+        val source = original.copyOf().also { pixels -> mask.indices.forEach { if (mask[it]) pixels[it] = Color.WHITE } }
+        val repaired = com.ruyo.reader.LocalInpainter.repair(source, w, h, mask)
+        var wrong = 0
+        for (i in original.indices) if (!mask[i]) assertEquals(original[i], repaired[i]) else if (original[i] != repaired[i]) wrong++
+        assertTrue("Native patch repair did not reconstruct the curved boundary: $wrong", wrong < 60)
+        val output = Bitmap.createBitmap(repaired, w, h, Bitmap.Config.ARGB_8888)
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.MediaColumns.DISPLAY_NAME, "native-artwork-repair.png")
+                    put(android.provider.MediaStore.MediaColumns.MIME_TYPE, "image/png")
+                    put(android.provider.MediaStore.MediaColumns.RELATIVE_PATH, android.os.Environment.DIRECTORY_DOWNLOADS + "/ruyo-diagnostics")
+                }
+                val uri = requireNotNull(context.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values))
+                context.contentResolver.openOutputStream(uri)!!.use { output.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            }
+        } finally { output.recycle() }
+    }
+
     @Test fun androidKeystoreEncryptsAndReopensTheVault() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val alias = "ruyo.test." + UUID.randomUUID()

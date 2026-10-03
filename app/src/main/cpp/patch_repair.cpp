@@ -75,7 +75,8 @@ std::vector<int32_t> repair(const std::vector<int32_t>& source, int w, int h,
             int cx=candidate%w,cy=candidate/w;
             if(!valid(cx,cy,radius)) return;
             // Very small displacement penalty breaks ambiguous matches in favor of nearby art.
-            double score=.0001*((cx-tx)*(cx-tx)+(cy-ty)*(cy-ty));
+            const double shiftX=cx-tx, shiftY=cy-ty;
+            double score=.0001*(shiftX*shiftX+shiftY*shiftY);
             for(auto p:samples) {
                 score+=p.weight*distance(output[p.index],source[(cy+p.dy)*w+cx+p.dx]);
                 if(score>=best) return;

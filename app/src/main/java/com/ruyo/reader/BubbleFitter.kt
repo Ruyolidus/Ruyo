@@ -127,6 +127,14 @@ class BubbleFitter {
                                 layout.draw(canvas)
                             }
                             paint.style = Paint.Style.FILL
+                            if (letteringStyle == LetteringStyle.TRANSLUCENT) {
+                                // Keep the contrast rim outside the glyph. Otherwise two opaque
+                                // stroke edges can cover the entire interior of a thin font.
+                                paint.alpha = 255
+                                paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT)
+                                layout.draw(canvas)
+                                paint.xfermode = null
+                            }
                             paint.color = textColor
                             paint.alpha = if (letteringStyle == LetteringStyle.TRANSLUCENT) (fillOpacity * 255).toInt() else 255
                             layout.draw(canvas)

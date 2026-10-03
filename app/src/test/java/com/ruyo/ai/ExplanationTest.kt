@@ -81,6 +81,24 @@ class ExplanationTest {
         val practice = ExplanationClient.request(ProviderSecret(p, "test-key"), "待って", "ja", options, practice = true).body
         assertTrue(practice.contains("EVERY target-language word"))
     }
+    @Test fun followUpRequestsOnlyMissingSectionsAndKeepsPreviouslyValidFields() = kotlinx.coroutines.runBlocking {
+        val previous = lesson().copy(reading = "", missingSections = listOf("reading"))
+        val output = java.io.ByteArrayOutputStream()
+        val reply = JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("finish_reason", "stop")
+            .put("message", JSONObject().put("content", "{\"reading\":\"まって\"}")))).toString()
+        val http = object : java.net.HttpURLConnection(java.net.URL("https://example.com")) {
+            override fun connect() = Unit
+            override fun disconnect() = Unit
+            override fun usingProxy() = false
+            override fun getResponseCode() = 200
+            override fun getOutputStream() = output
+            override fun getInputStream() = java.io.ByteArrayInputStream(reply.toByteArray())
+        }
+        val actual = ExplanationClient(TranslationClient { http }).complete(ProviderSecret(profile(), "test-key"), "待って", "ja", LessonPreferences(), previous)
+        assertEquals("まって", actual.reading); assertEquals(previous.meaning, actual.meaning)
+        assertEquals(previous.examples, actual.examples); assertTrue(actual.missingSections.isEmpty())
+        assertTrue(output.toString().contains("Return ONLY these JSON fields: reading"))
+    }
     @Test fun quickChoicesRoundTripAndRejectAnAmbiguousAnswer() {
         val value = lesson().copy(note = "It's a quick 'hang on!' you can say to a friend.", exercises = listOf(
             LessonExercise("Your friend walks away. Ask them to wait.", "待って", "It means wait.", "待って (matte): wait; ありがとう (arigatou): thanks; おはよう (ohayou): morning.", "まって", listOf("待って", "ありがとう", "おはよう"))))

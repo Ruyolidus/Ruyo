@@ -359,3 +359,43 @@ Tests cover the actual device OCR bounds as well as the manually specified crops
 Slow-provider tests use virtual time to accept 90-second single, batch and lesson
 responses, enforce selected deadlines, and verify cancellation after an unlimited
 wait. They use fake HTTP responses and do not measure real provider latency.
+
+
+### Reading and artwork update in 0.7.0
+
+Artwork cleanup now searches nearby original image patches in a small C++ engine
+bundled with the APK. No cloud image service, image model download or paid image
+request is used. The mask includes the source letters and outlines; donor patches
+exclude that mask and other saved lettering masks. Only masked pixels are changed.
+Patch reconstruction preserves sampled texture but cannot guarantee recovery of
+unique details hidden by the original letters. Review difficult artwork against
+Original. OCR omissions and incomplete masks still require correction.
+
+A bounded background cache reuses cleanup while adjusting fonts. Filled, hollow,
+and soft-fill lettering are available in the editor. Soft fill has an opacity
+slider; hollow letters retain transparent centers. Fitting measures the rendered
+outline too and shrinks the whole text horizontally without clipping. These options,
+the original recognized text, and font settings persist with each edit.
+Prepare an existing chapter again to refresh automatic cleanup with engine 9.
+Manual saved masks remain locked; open their editor to review and save a fresh render.
+
+Reader actions live in a single overflow menu. Original/Translated remains visible,
+and page art no longer competes with a settings button. Tap empty page space to
+hide/show the title bar, double tap or pinch to zoom, and tap a saved translation to
+study. Edit text remains available from the menu and lesson sheet.
+
+The first lesson request focuses on the selected line: meaning, reading, tone,
+ordered word/particle chunks, grammar, and useful vocabulary. Examples and practice
+load only when requested. Valid sections survive malformed optional sections or
+provider output truncation, and retries retain previously usable material. Complete
+response fields are recovered; unfinished strings and array items are never guessed.
+Settings offers a fixed learner level and explanation language. Cached lessons are
+separated by these preferences, source text, target text, language, and provider/model.
+Only text is sent to the user's provider; no live paid-provider tests run in CI.
+
+Native tests cover curved-boundary reconstruction, texture, excluded donors, invalid
+input, deterministic results and unmasked pixel preservation. Robolectric loads the
+same C++ source through JNI and checks rendered lettering, cache isolation and saved
+styles. Android instrumentation checks the packaged native library on an emulator.
+Run `bash scripts/test-native.sh` for the portable native tests; the Gradle unit-test
+task builds its Linux JNI library automatically (JDK 17 and a C++ compiler required).

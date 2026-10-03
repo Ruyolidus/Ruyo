@@ -62,7 +62,8 @@ internal fun WebReaderScreen(model: RuyoModel) {
                         Text(loaded?.exceptionOrNull()?.message ?: "This image could not be opened.", color = Color.White)
                         TextButton(onClick = { retry++ }) { Text("Retry image", color = Color.White) }
                     }
-                } else ReaderPage(if (model.japanese) page.displayed else page.original, "Web image " + (index + 1), "web-page-" + index) { x, y ->
+                } else ReaderPage(if (model.japanese) page.displayed else page.original, "Web image " + (index + 1), "web-page-" + index,
+                    onLongPress = if (!model.busy) ({ x, y -> model.editWebBubble(index, x, y); Unit }) else null) { x, y ->
                     if (!model.busy) {
                         val translated = if (model.japanese) page.edits.findLast { it.region.contains(x, y) } else null
                         if (model.selecting) model.editWebBubble(index, x, y)
@@ -128,7 +129,7 @@ internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier 
             item {
                 Text("Only recognised dialogue text is sent to your provider. Comic images stay on this device. Nearby bubbles are translated in small groups; saved swaps are reused.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Pinch to zoom. Tap translated dialogue to study. Edit from its lesson sheet; choose Edit text from the reader menu to make a correction.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
+                Text("Pinch or double tap to zoom. Tap a translation to study; hold text to edit. Tap empty space to show or hide the title bar.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
             }
             item {
                 if (model.route == "webread") OutlinedButton(onClick = { settings = false; model.returnToWebsite() }, modifier = Modifier.fillMaxWidth()) { Text("Return to website") }
@@ -156,7 +157,7 @@ private fun ChapterReaderTools(model: RuyoModel, modifier: Modifier) {
             Button(onClick = { settings = false; model.startPreparation() }, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("prepare-chapter")) { Text("Prepare whole chapter") }
             OutlinedButton(onClick = { settings = false; model.toggleSelection() }, modifier = Modifier.fillMaxWidth()) { Text("Edit bubbles") }
             TextButton(onClick = { settings = false; model.editProfiles() }) { Text(model.activeProfile?.name ?: "Choose AI provider") }
-            Text("Tap translated dialogue to study. Original and Translated stay available in the reader.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Tap a translation to study; hold text to edit. Pinch or double tap to zoom. Tap empty space to show or hide the title bar.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

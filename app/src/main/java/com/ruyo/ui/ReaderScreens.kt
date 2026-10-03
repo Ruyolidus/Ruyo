@@ -104,6 +104,7 @@ internal fun BookReader(model: RuyoModel) {
                         TextButton(onClick = { retry++ }) { Text("Retry", color = Color.White) }
                     }
                 } else ReaderPage(if (model.japanese && !model.selecting) data.displayed else data.original, "Page ${index + 1}", if (index == 0) "imported-page" else "imported-page-${page.id}",
+                    onLongPress = if (!model.busy && !model.selecting) ({ x, y -> model.selectBubble(x, y, data); Unit }) else null,
                     onArea = if (model.selecting && !model.busy) ({ l, t, r, b -> model.selectTextArea(l, t, r, b, data); Unit }) else null) { x, y ->
                     if (!model.busy) {
                         if (model.selecting) model.selectBubble(x, y, data)
@@ -139,12 +140,13 @@ internal fun ReaderControls(japanese: Boolean, onLanguage: (Boolean) -> Unit, de
 
 @Composable
 internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -> Unit)? = null,
-    onArea: ((Int, Int, Int, Int) -> Unit)? = null, onTap: (Int, Int) -> Unit) {
+    onArea: ((Int, Int, Int, Int) -> Unit)? = null, onLongPress: ((Int, Int) -> Unit)? = null, onTap: (Int, Int) -> Unit) {
     var zoom by remember { mutableFloatStateOf(1f) }
     var pan by remember { mutableStateOf(Offset.Zero) }
     var viewport by remember { mutableStateOf(IntSize.Zero) }
     val currentTap by rememberUpdatedState(onTap)
     val currentArea by rememberUpdatedState(onArea)
+    val currentLongPress by rememberUpdatedState(onLongPress)
     var areaStart by remember { mutableStateOf<Offset?>(null) }
     var areaEnd by remember { mutableStateOf<Offset?>(null) }
     val transforms = rememberTransformableState { factor, movement, _ ->
@@ -173,8 +175,13 @@ internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -
                     },
                     onDrag = { change, _ -> change.consume(); areaEnd = change.position })
             }
-        }.pointerInput(bitmap.width, bitmap.height, zoom, pan) {
-            detectTapGestures(onDoubleTap = { tap ->
+        }.pointerInput(bitmap.width, bitmap.height, zoom, pan, onLongPress != null, onArea != null) {
+            detectTapGestures(onLongPress = if (currentArea == null && currentLongPress != null) ({ tap ->
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val point = (tap - center - pan) / zoom + center
+                val scale = size.width.toFloat() / bitmap.width
+                currentLongPress?.invoke((point.x / scale).toInt(), (point.y / scale).toInt())
+            }) else null, onDoubleTap = { tap ->
                 zoom = if (zoom > 1.05f) 1f else 2.5f
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val desired = (center - tap) * (zoom - 1f)
@@ -271,19 +278,7 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                 }
                                 value.examples.forEachIndexed { index, example ->
                                     item {
-                                        var help by rememberSaveable(line.id, example.text) { mutableStateOf(false) }
-                                        SectionLabel("You could also say")
-                                        Text(example.text, style = MaterialTheme.typography.titleMedium)
-                                        Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                        if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
-                                        Text(example.explanation, Modifier.padding(top = 8.dp))
-                                        TextButton(onClick = { help = !help }, modifier = Modifier.testTag("example-help-$index")) { Text(if (help) "Hide reading & words" else "Reading & words") }
-                                        if (help) {
-                                            example.words.forEach { word ->
-                                                Text(word.word + " · " + word.reading, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall)
-                                                Text(word.meaning)
-                                            }
-                                        }
+                                        LessonExampleCard(example, index, line.id)
                                     }
                                 }
                                 item { OutlinedButton(onClick = { selectedTab = 3 }) { Text("Try a quick question") } }
@@ -310,6 +305,7 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                         Button(onClick = model::loadPractice, enabled = !model.explanationBusy, modifier = Modifier.testTag("load-practice")) { Text(if (model.practiceError == null) "Try it" else "Retry practice") }
                                     }
                                 }
+                                value.examples.forEachIndexed { index, example -> item { LessonExampleCard(example, index, line.id) } }
                                 value.exercises.forEachIndexed { index, exercise -> item {
                                 var revealed by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
                                 var choice by rememberSaveable(line.id, exercise.question) { mutableStateOf<String?>(null) }
@@ -343,4 +339,21 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
             }
         }
     }
+}
+
+@Composable
+private fun LessonExampleCard(example: com.ruyo.ai.LessonExample, index: Int, lineId: String) {
+                                        var help by rememberSaveable(lineId, example.text) { mutableStateOf(false) }
+                                        SectionLabel("You could also say")
+                                        Text(example.text, style = MaterialTheme.typography.titleMedium)
+                                        Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
+                                        Text(example.explanation, Modifier.padding(top = 8.dp))
+                                        TextButton(onClick = { help = !help }, modifier = Modifier.testTag("example-help-$index")) { Text(if (help) "Hide reading & words" else "Reading & words") }
+                                        if (help) {
+                                            example.words.forEach { word ->
+                                                Text(word.word + " · " + word.reading, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall)
+                                                Text(word.meaning)
+                                            }
+                                        }
 }

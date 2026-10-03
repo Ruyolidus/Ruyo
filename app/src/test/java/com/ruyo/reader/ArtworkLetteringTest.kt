@@ -32,6 +32,25 @@ class ArtworkLetteringTest {
         }
         solid.ink.recycle(); hollow.ink.recycle()
     }
+    @Test fun savedStylesAndOriginalTextSurviveReopeningAndRemovingTheEdit() {
+        val context = RuntimeEnvironment.getApplication()
+        val root = File(context.cacheDir, "lettering-" + java.util.UUID.randomUUID())
+        val source = Bitmap.createBitmap(220, 140, Bitmap.Config.ARGB_8888).apply { eraseColor(Color.rgb(50, 110, 160)) }
+        try {
+            val store = LocalBookStore(context, root, File(root, "stage"))
+            val book = store.addBitmap("Lettering fixture", source)
+            val region = BubbleRegion(0, 0, PixelMask(220, 140, BooleanArray(220*140) { true }), BooleanArray(220*140) { it % 220 in 45..48 && it / 220 in 30..90 }, Color.BLUE, inpaint = true)
+            val edit = BubbleEdit(region = region, japanese = "待って！", margin = 8, letteringStyle = LetteringStyle.TRANSLUCENT, fillOpacity = .27f, sourceText = "Wait!", bold = true)
+            store.saveEdit(book.id, source, edit)
+            val reopened = store.open(book)
+            val saved = reopened.edits.single()
+            assertEquals(edit.letteringStyle, saved.letteringStyle); assertEquals(.27f, saved.fillOpacity, .001f)
+            assertEquals("Wait!", saved.sourceText); assertTrue(saved.bold)
+            assertTrue(BubbleEditRenderer.composite(source, listOf(edit)).sameAs(reopened.displayed))
+            store.removeEdit(book.id, edit.id)
+            assertTrue(source.sameAs(store.open(book).displayed))
+        } finally { source.recycle(); root.deleteRecursively() }
+    }
     @Test fun softFillRetainsTranslucentInteriorAndCacheDoesNotLeakAcrossSources() {
         val w = 180; val h = 100
         val shape = PixelMask(w, h, BooleanArray(w*h) { true })
