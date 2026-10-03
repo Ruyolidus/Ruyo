@@ -9,6 +9,8 @@ plugins {
 android {
     namespace = "com.ruyo"
     compileSdk = 36
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     defaultConfig {
         applicationId = "com.ruyo"
@@ -16,7 +18,8 @@ android {
         targetSdk = 36
         versionCode = providers.environmentVariable("GITHUB_RUN_NUMBER")
             .orNull?.toIntOrNull() ?: 1
-        versionName = "0.2.0"
+        versionName = "0.7.0"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -33,12 +36,15 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     testOptions {
         unitTests.isIncludeAndroidResources = true
         unitTests.all {
+            it.testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
             it.maxHeapSize = "2g"
             it.systemProperty("roborazzi.test.record", "true")
+            it.systemProperty("ruyo.nativeLibrary", layout.buildDirectory.file("native-host/libruyo_repair.so").get().asFile.path)
+            it.systemProperty("ruyo.fixtureDir", file("src/androidTest/assets/regressions").absolutePath)
             it.systemProperty("ruyo.previewDir", layout.buildDirectory.dir("test-previews").get().asFile.path)
         }
     }
@@ -51,6 +57,14 @@ kotlin { compilerOptions { jvmTarget.set(JvmTarget.JVM_17) } }
 dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.09.01")
     implementation(composeBom)
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.23.2")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("com.google.mlkit:text-recognition-japanese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+    implementation("com.google.mlkit:text-recognition-korean:16.0.1")
+    implementation("com.google.mlkit:text-recognition-devanagari:16.0.1")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
     implementation("androidx.activity:activity-compose:1.10.1")
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.9.4")
@@ -66,5 +80,15 @@ dependencies {
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.50.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.robolectric:robolectric:4.16")
 }
+
+// Robolectric exercises the same C++ implementation as Android, never a mock repair.
+val nativeHost by tasks.registering(Exec::class) {
+    workingDir(rootDir)
+    commandLine("bash", "scripts/build-native-host.sh")
+    inputs.files(fileTree("src/main/cpp"), rootProject.file("scripts/build-native-host.sh"))
+    outputs.file(layout.buildDirectory.file("native-host/libruyo_repair.so"))
+}
+tasks.withType<Test>().configureEach { dependsOn(nativeHost) }

@@ -14,11 +14,25 @@ data class BubbleRegion(
     val interior: PixelMask,
     val eraseMask: BooleanArray,
     val backgroundColor: Int,
+    val backgroundSurface: BackgroundSurface? = null,
+    val textColor: Int = Color.rgb(39, 42, 53),
+    val inpaint: Boolean = false,
 ) {
     val width get() = interior.width
     val height get() = interior.height
     init { require(eraseMask.size == width * height) }
     fun contains(x: Int, y: Int) = interior[x - left, y - top]
+    fun overlaps(other: BubbleRegion): Boolean {
+        val x0 = maxOf(left, other.left); val x1 = minOf(left + width, other.left + other.width)
+        val y0 = maxOf(top, other.top); val y1 = minOf(top + height, other.top + other.height)
+        for (y in y0 until y1) for (x in x0 until x1) if (contains(x, y) && other.contains(x, y)) return true
+        return false
+    }
+}
+
+enum class LetteringStyle(val label: String) {
+    SOLID("Filled"), OUTLINE("Hollow"), TRANSLUCENT("Soft fill");
+    companion object { fun fromId(id: String) = entries.firstOrNull { it.name == id } ?: SOLID }
 }
 
 data class BubbleEdit(
@@ -26,26 +40,86 @@ data class BubbleEdit(
     val region: BubbleRegion,
     val japanese: String,
     val margin: Int,
+    val fontScale: Float = 1f,
+    val languageTag: String = "ja",
+    val fontFamily: String = "sans-serif",
+    val bold: Boolean = false,
+    val italic: Boolean = false,
+    val sourceLetterHeight: Float? = null,
+    val matchSourceSize: Boolean = false,
+    val cleanupVersion: Int = 0,
+    val cleanupLocked: Boolean = false,
+    val letteringStyle: LetteringStyle = LetteringStyle.SOLID,
+    val fillOpacity: Float = 0.4f,
+    val sourceText: String = "",
 )
 
 sealed interface SelectionResult {
     data class Selected(val region: BubbleRegion) : SelectionResult
-    data class Rejected(val reason: String) : SelectionResult
+    data class Rejected(val reason: String, val retryNearby: Boolean = false, val retryOutline: Boolean = false) : SelectionResult
 }
 
 /** A deliberately limited, user-seeded selector for enclosed, light, flat bubbles. */
 object BubbleSelector {
     fun select(source: Bitmap, x: Int, y: Int): SelectionResult {
-        fun reject(message: String) = SelectionResult.Rejected(message)
         val w = source.width
         val h = source.height
-        if (x !in 0 until w || y !in 0 until h) return reject("Tap inside the image.")
+        if (x !in 0 until w || y !in 0 until h) return SelectionResult.Rejected("Tap inside the image.")
         val pixels = IntArray(w * h)
         source.getPixels(pixels, 0, w, 0, 0, w, h)
-        val seed = pixels[y * w + x]
-        if (Color.alpha(seed) < 250 || minOf(Color.red(seed), Color.green(seed), Color.blue(seed)) < 175) {
-            return reject("Tap the empty, light background inside a bubble, away from its letters.")
+        var outlineAttempted = false
+        fun pick(xx: Int, yy: Int): SelectionResult {
+            val selected = selectAt(pixels, w, h, xx, yy)
+            if (selected is SelectionResult.Rejected && selected.retryOutline && !outlineAttempted) {
+                outlineAttempted = true
+                val repaired = selectThroughSmallGap(pixels, w, h, xx, yy)
+                if (repaired is SelectionResult.Selected && repaired.region.contains(x, y) && repaired.region.eraseMask.any { it }) return repaired
+            }
+            return selected
         }
+        val direct = pick(x, y)
+        if (direct is SelectionResult.Selected && (direct.region.eraseMask.any { it } || minOf(direct.region.width, direct.region.height) > 72)) return direct
+        if (direct is SelectionResult.Rejected && isLight(pixels[y * w + x]) && !direct.retryNearby) return direct
+        // A tap can land on dark ink, a pale antialiased edge, or a white counter
+        // inside a letter. Try nearby background in all three cases, accepting
+        // only an interior that contains the original tap. An empty direct
+        // selection is retained if no enclosing lettering-bearing region exists.
+        var attempts = 0
+        for (radius in listOf(3, 7, 14, 24, 36)) for ((dx, dy) in listOf(
+            0 to -radius, -radius to 0, radius to 0, 0 to radius,
+            -radius to -radius, radius to -radius, -radius to radius, radius to radius,
+        )) {
+            val xx = x + dx; val yy = y + dy
+            if (xx !in 0 until w || yy !in 0 until h || !isLight(pixels[yy * w + xx])) continue
+            if (attempts++ >= 32) return direct
+            val nearby = pick(xx, yy)
+            if (nearby is SelectionResult.Selected && nearby.region.contains(x, y) && nearby.region.eraseMask.any { it }) return nearby
+        }
+        return direct
+    }
+
+    private fun isLight(color: Int) = Color.alpha(color) >= 250 && minOf(Color.red(color), Color.green(color), Color.blue(color)) >= 175
+
+    private fun selectThroughSmallGap(pixels: IntArray, w: Int, h: Int, x: Int, y: Int): SelectionResult {
+        val cw = minOf(w, 1024); val ch = minOf(h, 1024)
+        val left = (x - cw / 2).coerceIn(0, w - cw); val top = (y - ch / 2).coerceIn(0, h - ch)
+        val crop = IntArray(cw * ch) { pixels[(top + it / cw) * w + left + it % cw] }
+        return when (val result = selectAt(crop, cw, ch, x - left, y - top, seal = 2)) {
+            is SelectionResult.Selected -> SelectionResult.Selected(result.region.copy(left = result.region.left + left, top = result.region.top + top))
+            is SelectionResult.Rejected -> result
+        }
+    }
+
+    private fun selectAt(pixels: IntArray, w: Int, h: Int, x: Int, y: Int, seal: Int = 0): SelectionResult {
+        fun reject(message: String) = SelectionResult.Rejected(message)
+        val seed = pixels[y * w + x]
+        if (!isLight(seed)) {
+            return reject("No enclosed light bubble found. Tap the lettering to try text-area cleanup. Detailed artwork may need manual repair.")
+        }
+        // Erosion closes only very narrow background leaks through a broken outline.
+        // The accepted interior stays inset; source border pixels are never repainted.
+        val allowed = if (seal > 0) PixelMask(w, h, BooleanArray(pixels.size) { distance(pixels[it], seed) <= 18 && Color.alpha(pixels[it]) >= 250 }).inset(seal) else null
+        if (allowed != null && !allowed[x, y]) return reject("Try an empty spot farther inside this bubble.")
         val cap = min(pixels.size, 900_000)
         val queue = IntArray(cap)
         val visited = BooleanArray(pixels.size)
@@ -56,7 +130,7 @@ object BubbleSelector {
         var left = x; var right = x; var top = y; var bottom = y
         var edge = false
         fun add(index: Int): Boolean {
-            if (visited[index] || distance(pixels[index], seed) > 18 || Color.alpha(pixels[index]) < 250) return true
+            if (visited[index] || distance(pixels[index], seed) > 18 || Color.alpha(pixels[index]) < 250 || allowed != null && !allowed[index % w, index / w]) return true
             if (tail == cap) return false
             visited[index] = true
             queue[tail++] = index
@@ -66,15 +140,16 @@ object BubbleSelector {
             val i = queue[head++]
             val xx = i % w; val yy = i / w
             left = min(left, xx); right = max(right, xx); top = min(top, yy); bottom = max(bottom, yy)
-            if (xx == 0 || yy == 0 || xx == w - 1 || yy == h - 1) edge = true
+            if (xx <= seal || yy <= seal || xx >= w - 1 - seal || yy >= h - 1 - seal) edge = true
             if ((xx > 0 && !add(i - 1)) || (xx < w - 1 && !add(i + 1)) ||
                 (yy > 0 && !add(i - w)) || (yy < h - 1 && !add(i + w))) {
-                return reject("This area is too large. Choose a smaller, enclosed speech bubble.")
+                return SelectionResult.Rejected("This area is too large. Choose a smaller, enclosed speech bubble.", retryOutline = seal == 0)
             }
         }
-        if (edge) return reject("This area reaches the image edge. Choose a bubble with a complete outline.")
+        if (edge) return SelectionResult.Rejected("The detected background connects to the page edge. Try an empty spot inside another part of the bubble; its outline may be open or clipped.", retryOutline = seal == 0)
         val cw = right - left + 1; val ch = bottom - top + 1
-        if (cw < 40 || ch < 32 || tail < 600 || cw.toLong() * ch > 900_000) return reject("This selection is too small or irregular. Tap a different empty part of the bubble.")
+        if (cw < 16 || ch < 16 || tail < 80) return SelectionResult.Rejected("There is too little bubble background at this image resolution. Try an empty area beside the letters, or a higher-quality source image.", retryNearby = true)
+        if (cw.toLong() * ch > 900_000) return SelectionResult.Rejected("This area is too large. Choose a smaller, enclosed speech bubble.", retryOutline = seal == 0)
 
         // The connected background excludes lettering. Fill enclosed holes to recover the interior.
         val background = BooleanArray(cw * ch) { visited[(top + it / cw) * w + left + it % cw] }
@@ -129,27 +204,51 @@ object BubbleSelector {
 data class BubblePreview(val crop: Bitmap, val fit: FitResult.Accepted)
 
 object BubbleEditRenderer {
-    fun preview(source: Bitmap, edit: BubbleEdit): Result<BubblePreview> = runCatching {
+    // Start at ordinary dialogue size (about 16 dp on a 393 dp-wide reader),
+    // independent of the amount of empty space in a large speech bubble.
+    fun preferredSize(pageWidth: Int, scale: Float = 1f): Float = (pageWidth / 24f).coerceIn(14f, 60f) * scale
+
+    fun preferredSize(pageWidth: Int, edit: BubbleEdit): Float {
+        val height = edit.sourceLetterHeight
+        val font = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic)
+        return if (edit.matchSourceSize && height != null && height.isFinite() && height > 0f)
+            SourceLettering.preferredSize(height, edit.languageTag, font) * edit.fontScale
+        else preferredSize(pageWidth, edit.fontScale)
+    }
+
+    fun preview(source: Bitmap, edit: BubbleEdit, otherRegions: List<BubbleRegion> = emptyList()): Result<BubblePreview> = runCatching {
         val region = edit.region
+        require(!region.inpaint || region.eraseMask.any { it }) { "Brush over the original letters, or use Rebuild cleanup, before previewing this area." }
         require(region.left >= 0 && region.top >= 0 && region.left + region.width <= source.width && region.top + region.height <= source.height) { "The bubble is outside the image." }
         val safe = region.interior.inset(edit.margin.coerceAtLeast(2))
-        val minimum = max(12f, source.width / 32f)
-        val result = BubbleFitter().fit(edit.japanese, safe, max(minimum, min(76f, region.height / 2.5f)), minimum)
+        require(edit.fontScale.isFinite() && edit.fontScale in 0.6f..1.6f) { "Choose a text size between 60% and 160%." }
+        val preferred = preferredSize(source.width, edit)
+        val minimum = min(preferred, 6f)
+        val result = BubbleFitter().fit(LetteringText.normalize(edit.japanese), safe, preferred, minimum,
+            textColor = region.textColor, languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic),
+            letteringStyle = edit.letteringStyle, fillOpacity = edit.fillOpacity, contrastOutline = region.inpaint)
         require(result is FitResult.Accepted) { (result as FitResult.Rejected).reason }
-        val pixels = IntArray(region.width * region.height)
-        source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
-        for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] = region.backgroundColor
+        val pixels = cleanedPixels(source, region, otherRegions)
         val crop = Bitmap.createBitmap(region.width, region.height, Bitmap.Config.ARGB_8888)
         crop.setPixels(pixels, 0, region.width, 0, 0, region.width, region.height)
         Canvas(crop).drawBitmap(result.ink, 0f, 0f, null)
         BubblePreview(crop, result)
     }
 
+    internal fun cleanedPixels(source: Bitmap, region: BubbleRegion, otherRegions: List<BubbleRegion> = emptyList()): IntArray {
+        if (region.inpaint) return ArtworkBackgrounds.clean(source, region, otherRegions)
+        val pixels = IntArray(region.width * region.height)
+        source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
+        for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] =
+            region.backgroundSurface?.colorAt(region.left + i % region.width, region.top + i / region.width) ?: region.backgroundColor
+        return pixels
+    }
+
     fun composite(source: Bitmap, edits: List<BubbleEdit>): Bitmap {
         val bitmap = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(bitmap)
         for (edit in edits) {
-            val preview = preview(source, edit).getOrThrow()
+            val preview = preview(source, edit, edits.map { it.region }).getOrThrow()
             // Transparent outside the explicit repair/ink footprint, so overlapping
             // bounding rectangles cannot erase a previously composed bubble.
             val pixels = IntArray(edit.region.width * edit.region.height)

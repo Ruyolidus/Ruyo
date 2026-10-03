@@ -3,15 +3,14 @@ name: Android APK
 on:
   push:
     branches: [main, 'feature/**', 'codex/**']
-  pull_request:
-    branches: [main]
+  # Branch pushes also attach checks to their PR; do not launch a duplicate run.
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-${{ github.ref }}
+  group: android-${{ github.event.pull_request.head.ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -33,9 +32,35 @@ jobs:
         with:
           packages: ''
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Fetch and verify offline text detector
+        run: python3 scripts/fetch-ocr-model.py
+      - name: Test native artwork repair
+        run: bash scripts/test-native.sh
+      - name: Test website image discovery
+        run: node scripts/test-web-discovery.mjs
       - name: Test, lint, and assemble
         run: ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug
+      - name: Summarize validation results
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = sorted(Path("app/build/test-results/testDebugUnitTest").glob("TEST-*.xml"))
+          totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+          for report in reports:
+              suite = ET.parse(report).getroot()
+              for key in totals:
+                  totals[key] += int(suite.attrib.get(key, 0))
+              print(suite.attrib.get("name"), {key: suite.attrib.get(key, "0") for key in totals})
+          print("TEST TOTALS:", totals, "suites:", len(reports))
+          lint = Path("app/build/reports/lint-results-debug.xml")
+          if lint.exists():
+              issues = ET.parse(lint).getroot().findall("issue")
+              print("LINT:", {level: sum(issue.attrib.get("severity") == level for issue in issues) for level in ["Fatal", "Error", "Warning"]})
+          print("RENDERED PNGS:", len(list(Path("app/build/test-previews").glob("*.png"))))
+          PY
       - name: Verify application ID
         run: |
           ruyo_package_info=$("$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging app/build/outputs/apk/debug/app-debug.apk)
@@ -69,15 +94,81 @@ jobs:
           The application ID is **com.ruyo**, including this debug build.
           It installs separately from the first com.ruyolidus.ruyo.debug preview.
 
-          This build includes the redesigned library and reader, persistent image
-          imports, manual bubble cleanup and Japanese replacement, sample lessons,
-          saved sentences, and theme settings. Tap the pencil in an imported image,
-          then tap the empty background inside an enclosed light bubble.
-          Live AI translation, OCR, and website imports are not yet implemented.
+          This build adds named series and ordered chapters, PDF/CBZ/image imports,
+          and full chapter preparation with resumable progress before reading.
+          Browse a chapter, scroll to load its images, then Extract images for import.
+          Original/Translated and series Previous/Next stay visible while reading.
+          Overlapping OCR and contrast passes improve outlined-text recognition.
+          Shaded captions and high-contrast art lettering use masked local repair;
+          artwork results need review. Hold-and-drag and brush controls allow corrections.
+          Tap translated dialogue for a short explanation, expandable reading help,
+          and a quick choice question.
+          Add profiles in Settings > Manage AI providers. Keys stay encrypted on-device.
+          Only dialogue text is sent to translation and explanation providers.
 
           Ruyo-checks includes native renderer tests and actual app-screen PNGs.
 
           The runner generates a debug signing key. A later build may have a different
           signing identity. If Android refuses an update, uninstall the earlier preview
-          first; this removes its saved sentences. Persistent private signing comes later.
+          first; this removes its locally saved chapters, edits, sentences, and provider profiles. Persistent private signing comes later.
           SUMMARY
+
+  device:
+    name: Android 12 OCR and Keystore checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+      - uses: android-actions/setup-android@v4
+        with:
+          packages: ''
+      - name: Free space for emulator userdata
+        run: |
+          sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Install compile SDK
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
+      - name: Enable emulator acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Fetch and verify offline text detector
+        run: python3 scripts/fetch-ocr-model.py
+      - name: Exercise real on-device services
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31
+          target: google_apis
+          arch: x86_64
+          disable-animations: true
+          disk-size: 2048M
+          emulator-boot-timeout: 180
+          emulator-options: -no-window -no-snapshot -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: bash scripts/test-device.sh
+      - name: Summarize device checks
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          for report in Path("app/build/outputs/androidTest-results").rglob("TEST-*.xml"):
+              suite = ET.parse(report).getroot()
+              print("DEVICE TESTS:", suite.attrib)
+          PY
+      - name: Upload device reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Ruyo-device-checks-${{ github.run_number }}
+          path: |
+            app/build/reports/androidTests/
+            app/build/outputs/androidTest-results/
+            app/build/translation-diagnostics/
+          if-no-files-found: ignore
+          retention-days: 7

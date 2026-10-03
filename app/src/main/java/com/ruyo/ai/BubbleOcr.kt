@@ -1,0 +1,416 @@
+package com.ruyo.ai
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Color
+import android.graphics.Rect
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.latin.TextRecognizerOptions
+import com.google.mlkit.vision.text.japanese.JapaneseTextRecognizerOptions
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
+import com.google.mlkit.vision.text.korean.KoreanTextRecognizerOptions
+import com.google.mlkit.vision.text.devanagari.DevanagariTextRecognizerOptions
+import com.ruyo.reader.BubbleRegion
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import java.util.concurrent.Executor
+
+enum class OcrScript(val label: String) {
+    LATIN("Latin (English, French…)"), JAPANESE("Japanese"), CHINESE("Chinese"), KOREAN("Korean"), DEVANAGARI("Devanagari (Hindi…)")
+}
+data class OcrWord(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float)
+data class OcrLine(val text: String, val left: Int, val top: Int, val right: Int, val bottom: Int, val confidence: Float = 1f, val angle: Float = 0f,
+    val alternatives: List<String> = emptyList(), val words: List<OcrWord> = emptyList()) {
+    val x get() = (left + right) / 2
+    val y get() = (top + bottom) / 2
+}
+fun interface OcrService {
+    suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript): String
+    suspend fun lines(source: Bitmap, script: OcrScript): List<OcrLine> =
+        throw IllegalStateException("Page recognition is not available with this recognizer.")
+}
+
+/** Own the input copy until ML Kit's native task finishes, including after cancellation. */
+class BubbleOcr(context: Context? = null, private val onDetected: ((List<Rect>) -> Unit)? = null,
+    private val onCrop: ((Rect, Int, List<OcrLine>) -> Unit)? = null) : OcrService, AutoCloseable {
+    private val app = context?.applicationContext
+    private val detectorState = lazy { app?.let(::LearnedTextDetector) }
+    private val gate = Mutex()
+    @Volatile private var released = false
+    private var client: com.google.mlkit.vision.text.TextRecognizer? = null
+    private var clientScript: OcrScript? = null
+    private fun closeClient() { client?.close(); client = null; clientScript = null }
+    override fun close() {
+        released = true
+        if (gate.tryLock()) try { closeClient() } finally { gate.unlock() }
+        if (detectorState.isInitialized()) detectorState.value?.close()
+    }
+    override suspend fun recognize(source: Bitmap, region: BubbleRegion, script: OcrScript): String {
+        val original = process(script, { crop(source, region) }) { it.text.trim() }
+        if (original.isNotEmpty()) return original
+        currentCoroutineContext().ensureActive()
+        return process(script, { crop(source, region).also(OcrTiles::contrast) }) {
+            it.text.trim().also { text -> require(text.isNotEmpty()) { "No readable text found. Check the source script, or type the original text below." } }
+        }
+    }
+
+    override suspend fun lines(source: Bitmap, script: OcrScript): List<OcrLine> {
+        val found = mutableListOf<OcrLine>()
+        var wordRetries = 0
+        for (tile in OcrTiles.regions(source.width, source.height)) {
+            for (contrast in listOf(false, true)) {
+                currentCoroutineContext().ensureActive()
+                val result = process(script, {
+                    val bitmap = Bitmap.createBitmap(tile.width(), tile.height(), Bitmap.Config.ARGB_8888)
+                    android.graphics.Canvas(bitmap).drawBitmap(source, tile, Rect(0, 0, tile.width(), tile.height()), null)
+                    if (contrast) OcrTiles.contrast(bitmap)
+                    bitmap
+                }) { text ->
+                    text.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { r ->
+                        if (line.text.isBlank() || r.width() <= 0 || r.height() <= 0) null
+                        else OcrLine(line.text.trim(), (r.left + tile.left).coerceAtLeast(0), (r.top + tile.top).coerceAtLeast(0),
+                            (r.right + tile.left).coerceAtMost(source.width), (r.bottom + tile.top).coerceAtMost(source.height), line.confidence, slope(line),
+                            words = line.elements.mapNotNull { word -> word.boundingBox?.let { b ->
+                                OcrWord(word.text,(b.left+tile.left).coerceAtLeast(0),(b.top+tile.top).coerceAtLeast(0),
+                                    (b.right+tile.left).coerceAtMost(source.width),(b.bottom+tile.top).coerceAtMost(source.height),word.confidence)
+                            } })
+                    } }
+                }
+                onCrop?.invoke(tile,if(contrast) -2 else -1,result)
+                OcrTiles.merge(found, result)
+                require(found.size <= 300) { "This image has too many text lines. Tap individual text areas to edit them." }
+            }
+            // A line's average confidence can conceal one misread word. Retry
+            // only conflicting bright words, with a strict per-page work budget.
+            for (index in found.indices) {
+                val line=found[index]
+                if(wordRetries>=8 || script!=OcrScript.LATIN || !tile.contains(line.x,line.y) || line.confidence<.65f ||
+                    line.alternatives.isEmpty() || !OcrTiles.lightLettering(source,line)) continue
+                val words=line.words.filter { word ->
+                    val normalized=OcrTiles.normalized(word.text)
+                    normalized.length>=3 && line.alternatives.any { normalized !in OcrTiles.normalized(it) }
+                }.sortedBy { it.confidence }.take(2)
+                for(word in words) {
+                    if(wordRetries>=8) break
+                    currentCoroutineContext().ensureActive()
+                    val pad=((word.bottom-word.top)/6).coerceIn(3,10)
+                    val box=Rect((word.left-pad).coerceAtLeast(0),(word.top-pad).coerceAtLeast(0),
+                        (word.right+pad).coerceAtMost(source.width),(word.bottom+pad).coerceAtMost(source.height))
+                    if(box.width()<8 || box.height()<8) continue
+                    wordRetries++
+                    val readings=recognizeBox(source,box,script,false,2,line.angle)
+                    onCrop?.invoke(box,4,readings)
+                    readings.maxByOrNull { it.confidence }?.let { reading -> found[index]=OcrTiles.correctWord(found[index],word,reading) }
+                }
+            }
+            currentCoroutineContext().ensureActive()
+            val model = detectorState.value
+            val detected = if (model == null) emptyList() else {
+                val tileImage = Bitmap.createBitmap(source, tile.left, tile.top, tile.width(), tile.height())
+                try { model.detect(tileImage).map { Rect(it).apply { offset(tile.left, tile.top) } } }
+                finally { if (tileImage !== source) tileImage.recycle() }
+            }
+            onDetected?.invoke(detected)
+            // A detector miss must not prevent a weak primary OCR line from receiving a crop retry.
+            val weak = found.filter { tile.contains(it.x,it.y) && it.confidence < .65f }.map { line ->
+                val pad = ((line.bottom-line.top)/2).coerceIn(10,36)
+                Rect((line.left-pad).coerceAtLeast(0),(line.top-pad).coerceAtLeast(0),
+                    (line.right+pad).coerceAtMost(source.width),(line.bottom+pad).coerceAtMost(source.height))
+            }
+            // Preserve individual readings and add full-paragraph retries. The
+            // two scales can resolve different words in small outlined lettering.
+            val joined = OcrTiles.retryRegions(weak, detected)
+            for (box in (weak + joined).distinct()) {
+                currentCoroutineContext().ensureActive()
+                val hint = found.filter { box.contains(it.x,it.y) }.minByOrNull { kotlin.math.abs(it.y-box.centerY()) }
+                val light = hint?.let { OcrTiles.lightLettering(source,it) } == true
+                fun alreadyRead() = found.any { line -> line.confidence >= .68f && box.contains(line.x,line.y) &&
+                    kotlin.math.abs(line.y-box.centerY()) <= box.height()*.20f &&
+                    line.right-line.left >= box.width()*.60f && line.bottom-line.top >= box.height()*.25f }
+                if (alreadyRead()) continue
+                val angle = hint?.angle ?: 0f
+                // A pale outline around dark letters also trips the bright-letter
+                // heuristic. Always try its enclosed dark cores before inversion.
+                for (mode in if (light) listOf(3,2,0) else listOf(3,0)) {
+                    val readings=recognizeBox(source,box,script,false,mode,angle,individual = box in weak)
+                    onCrop?.invoke(box,mode,readings)
+                    OcrTiles.merge(found,readings)
+                    if (alreadyRead()) break
+                }
+                require(found.size <= 300) { "This image has too many separate text lines." }
+            }
+            OcrTiles.coverDetectedLettering(found, detected)
+        }
+        return found.sortedWith(compareBy<OcrLine> { it.top }.thenBy { it.left })
+    }
+
+    private fun slope(line: Text.Line): Float {
+        val points = line.cornerPoints ?: return 0f
+        if (points.size < 2) return 0f
+        return Math.toDegrees(kotlin.math.atan2((points[1].y - points[0].y).toDouble(), (points[1].x - points[0].x).toDouble())).toFloat().coerceIn(-25f, 25f)
+    }
+
+    private suspend fun recognizeBox(source: Bitmap, rect: Rect, script: OcrScript, contrast: Boolean, isolate: Int = 0, angle: Float = 0f,
+        individual: Boolean = false): List<OcrLine> {
+        val scale = if(individual) (192f / rect.height()).coerceIn(1.5f,3f) else (256f / rect.height()).coerceIn(2f,3f)
+        val w = (rect.width() * scale).toInt(); val h = (rect.height() * scale).toInt()
+        val radians = Math.toRadians(angle.toDouble())
+        val bw = (w * kotlin.math.abs(kotlin.math.cos(radians)) + h * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
+        val bh = (h * kotlin.math.abs(kotlin.math.cos(radians)) + w * kotlin.math.abs(kotlin.math.sin(radians))).toInt() + 34
+        val mapping = android.graphics.Matrix().apply {
+            setRectToRect(android.graphics.RectF(rect), android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Matrix.ScaleToFit.FILL)
+            postRotate(-angle); postTranslate(bw / 2f, bh / 2f)
+        }
+        val inverse = android.graphics.Matrix(); check(mapping.invert(inverse))
+        return process(script, {
+            Bitmap.createBitmap(bw, bh, Bitmap.Config.ARGB_8888).also { bitmap ->
+                bitmap.eraseColor(Color.WHITE)
+                // Transform source pixels before adding a white margin. Inverting bright
+                // lettering after padding creates a black frame that confuses recognition.
+                val crop = Bitmap.createBitmap(rect.width(), rect.height(), Bitmap.Config.ARGB_8888)
+                try {
+                    android.graphics.Canvas(crop).drawBitmap(source, rect, Rect(0, 0, crop.width, crop.height), null)
+                    if (contrast) OcrTiles.contrast(crop)
+                    if (isolate == 3) OcrTiles.outlined(crop)
+                    else if (isolate != 0) OcrTiles.isolate(crop, isolate == 2)
+                    val canvas = android.graphics.Canvas(bitmap)
+                    canvas.translate(bw / 2f, bh / 2f); canvas.rotate(-angle)
+                    canvas.drawBitmap(crop, null, android.graphics.RectF(-w / 2f, -h / 2f, w / 2f, h / 2f), android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG))
+                } finally { crop.recycle() }
+            }
+        }) { result -> result.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { bounds ->
+            val original = android.graphics.RectF(bounds); inverse.mapRect(original)
+            val left = original.left.toInt().coerceIn(0, source.width); val top = original.top.toInt().coerceIn(0, source.height)
+            val right = original.right.toInt().coerceIn(0, source.width); val bottom = original.bottom.toInt().coerceIn(0, source.height)
+            if (line.text.isBlank() || right <= left || bottom <= top) null else OcrLine(line.text.trim(), left, top, right, bottom, line.confidence, slope(line) + angle)
+        } } }
+    }
+
+    private suspend fun <T> process(script: OcrScript, input: () -> Bitmap, result: (Text) -> T): T {
+        gate.lock()
+        val bitmap: Bitmap
+        val recognizer: com.google.mlkit.vision.text.TextRecognizer
+        try {
+            check(!released) { "Text recognition has been closed." }
+            bitmap = input()
+            try {
+                if (clientScript != script) closeClient()
+                recognizer = client ?: when (script) {
+                    OcrScript.LATIN -> TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+                    OcrScript.JAPANESE -> TextRecognition.getClient(JapaneseTextRecognizerOptions.Builder().build())
+                    OcrScript.CHINESE -> TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+                    OcrScript.KOREAN -> TextRecognition.getClient(KoreanTextRecognizerOptions.Builder().build())
+                    OcrScript.DEVANAGARI -> TextRecognition.getClient(DevanagariTextRecognizerOptions.Builder().build())
+                }.also { client = it; clientScript = script }
+            } catch (error: Exception) { bitmap.recycle(); throw error }
+        } catch (error: Exception) { gate.unlock(); throw error }
+        return suspendCancellableCoroutine { continuation ->
+            try {
+                recognizer.process(InputImage.fromBitmap(bitmap, 0)).addOnCompleteListener(Executor { it.run() }) { task ->
+                    try {
+                        if (continuation.isActive) continuation.resumeWith(runCatching {
+                            check(task.isSuccessful) { "Text recognition failed. Check the source script or enter the text manually." }
+                            result(task.result)
+                        })
+                    } finally { if (released) closeClient(); bitmap.recycle(); gate.unlock() }
+                }
+            } catch (_: Exception) {
+                closeClient(); bitmap.recycle(); gate.unlock()
+                if (continuation.isActive) continuation.resumeWith(Result.failure(IllegalStateException("Text recognition could not start. Try again or enter the text manually.")))
+            }
+        }
+    }
+    companion object {
+        fun crop(source: Bitmap, region: BubbleRegion): Bitmap {
+            val padding = 16; val width = region.width + padding * 2; val height = region.height + padding * 2
+            val pixels = IntArray(region.width * region.height)
+            source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
+            val output = IntArray(width * height) { Color.WHITE }
+            for (y in 0 until region.height) for (x in 0 until region.width) if (region.interior[x, y]) output[(y + padding) * width + x + padding] = pixels[y * region.width + x]
+            return Bitmap.createBitmap(output, width, height, Bitmap.Config.ARGB_8888)
+        }
+    }
+}
+
+/** Preserve working-image resolution through overlapping OCR tiles. No image leaves the device. */
+internal object OcrTiles {
+    fun normalized(text: String): String = java.text.Normalizer.normalize(text,java.text.Normalizer.Form.NFKD)
+        .lowercase().filter { it.isLetterOrDigit() }
+
+    fun correctWord(line: OcrLine, word: OcrWord, reading: OcrLine): OcrLine {
+        val old=normalized(word.text);val new=normalized(reading.text)
+        if(new.length<3 || reading.text.any { it.isWhitespace() } || new.length !in (old.length*3/5)..(old.length*7/5+1) ||
+            reading.confidence<maxOf(.65f,word.confidence) || old==new) return line
+        var previous=IntArray(new.length+1) { it }
+        for(i in old.indices) {
+            val row=IntArray(new.length+1);row[0]=i+1
+            for(j in new.indices) row[j+1]=minOf(row[j]+1,previous[j+1]+1,previous[j]+if(old[i]==new[j]) 0 else 1)
+            previous=row
+        }
+        if(previous.last()>maxOf(1,old.length/4)) return line
+        val pattern=Regex("(?<![\\p{L}\\p{N}])"+Regex.escape(word.text)+"(?![\\p{L}\\p{N}])")
+        if(pattern.findAll(line.text).count()!=1) return line
+        val updated=pattern.replace(line.text) { reading.text }
+        return line.copy(text=updated,alternatives=(listOf(line.text)+line.alternatives).distinct().take(2))
+    }
+
+    /** Recognition sometimes reads a complete word with a box that clips its first
+     * stroke. Use the independent detector's extent when it identifies that same
+     * single line; never combine neighboring lines just because their boxes meet. */
+    fun coverDetectedLettering(lines: MutableList<OcrLine>, boxes: List<Rect>) {
+        for (box in boxes) {
+            val matches = lines.indices.filter { index ->
+                val line=lines[index];val width=line.right-line.left;val height=line.bottom-line.top
+                val overlap=minOf(line.right,box.right)-maxOf(line.left,box.left)
+                width>0 && height>0 && box.width()<=width*1.8 && box.height()<=height*1.65 &&
+                    kotlin.math.abs(line.y-box.centerY())<=minOf(height,box.height())*.35 &&
+                    overlap>minOf(width,box.width())*.65
+            }
+            if(matches.size!=1) continue
+            val index=matches.single();val line=lines[index]
+            // Detector padding is not letter height. Inflating it makes separate
+            // paragraphs merge and breaks grouping of overlapping slanted lines.
+            lines[index]=line.copy(left=minOf(line.left,box.left),right=maxOf(line.right,box.right))
+        }
+    }
+
+    fun retryRegions(weak: List<Rect>, detected: List<Rect>): List<Rect> {
+        val pending = (weak + detected).map(::Rect).toMutableList()
+        val result = mutableListOf<Rect>()
+        while (pending.isNotEmpty()) {
+            val group = pending.removeAt(0)
+            var changed: Boolean
+            do {
+                changed = false
+                val iterator = pending.iterator()
+                while (iterator.hasNext()) {
+                    val other = iterator.next()
+                    val width = (minOf(group.right,other.right)-maxOf(group.left,other.left)).coerceAtLeast(0)
+                    val height = (minOf(group.bottom,other.bottom)-maxOf(group.top,other.top)).coerceAtLeast(0)
+                    val area = minOf(group.width()*group.height(),other.width()*other.height())
+                    val mergedHeight = maxOf(group.bottom,other.bottom)-minOf(group.top,other.top)
+                    if (width*height > area*.30 && mergedHeight <= 256 &&
+                        width > minOf(group.width(),other.width())*.55) {
+                        group.union(other); iterator.remove(); changed = true
+                    }
+                }
+            } while (changed)
+            result += group
+        }
+        return result
+    }
+    /** Bright glyphs on a darker panel benefit from polarity correction even when
+     * the recognizer gives a plausible-looking, but misspelled, first reading. */
+    fun lightLettering(source: Bitmap, line: OcrLine): Boolean {
+        val width=line.right-line.left;val height=line.bottom-line.top
+        if(width<=0||height<=0) return false
+        val pixels=IntArray(width*height)
+        source.getPixels(pixels,0,width,line.left,line.top,width,height)
+        var dark=0;var bright=0
+        for(c in pixels) {
+            val value=minOf(Color.red(c),Color.green(c),Color.blue(c))
+            if(value<180) dark++
+            if(value>200) bright++
+        }
+        return dark>pixels.size/2 && bright>pixels.size/40
+    }
+    fun regions(width: Int, height: Int): List<Rect> {
+        fun starts(length: Int, limit: Int): List<Int> {
+            if (length <= limit) return listOf(0)
+            val result = mutableListOf(0)
+            while (result.last() + limit < length) result += minOf(result.last() + limit - 192, length - limit)
+            return result
+        }
+        return starts(height, 1536).flatMap { y -> starts(width, 1280).map { x -> Rect(x, y, minOf(width, x + 1280), minOf(height, y + 1536)) } }
+    }
+    fun merge(existing: MutableList<OcrLine>, added: List<OcrLine>) {
+        for (line in added) {
+            if (line.right <= line.left || line.bottom <= line.top) continue
+            val duplicate = existing.indices.mapNotNull { index ->
+                val other=existing[index]
+                val width = (minOf(line.right, other.right) - maxOf(line.left, other.left)).coerceAtLeast(0)
+                val height = (minOf(line.bottom, other.bottom) - maxOf(line.top, other.top)).coerceAtLeast(0)
+                val smaller = minOf((line.right - line.left) * (line.bottom - line.top), (other.right - other.left) * (other.bottom - other.top))
+                val overlap=width*height.toDouble()/smaller.coerceAtLeast(1)
+                if(overlap>.60) index to overlap else null
+            }.maxByOrNull { it.second }?.first ?: -1
+            if (duplicate < 0) existing += line
+            else {
+                val other = existing[duplicate]
+                // A full line can replace a tile-edge fragment. Extra punctuation
+                // alone (often a balloon curve read as a dash) is not more content.
+                val extendsContent = line.text.contains(other.text, ignoreCase = true) &&
+                    line.text.count { it.isLetterOrDigit() } > other.text.count { it.isLetterOrDigit() }
+                val chosen = if (extendsContent ||
+                    (line.confidence > other.confidence + (if(other.confidence<.65f) 0f else .02f) &&
+                        line.text.length >= other.text.length * .75f)) line else other
+                val alternatives = (listOf(other.text,line.text) + other.alternatives + line.alternatives)
+                    .distinctBy { it.lowercase().replace(Regex("\\s+"), "") }
+                    .filter { !it.equals(chosen.text, ignoreCase = true) && it.length in 1..512 && it.length>=chosen.text.length*.60 }.take(2)
+                existing[duplicate] = chosen.copy(alternatives = alternatives)
+            }
+        }
+    }
+    /** Isolate neutral dark cores or bright lettering from colored comic artwork for OCR only. */
+    fun outlined(bitmap: Bitmap) {
+        val w=bitmap.width;val h=bitmap.height;val pixels=IntArray(w*h)
+        bitmap.getPixels(pixels,0,w,0,0,w,h)
+        val dark=BooleanArray(pixels.size);val bright=BooleanArray(pixels.size)
+        for(i in pixels.indices) {
+            val c=pixels[i];val lo=minOf(Color.red(c),Color.green(c),Color.blue(c));val hi=maxOf(Color.red(c),Color.green(c),Color.blue(c))
+            dark[i]=hi<150 && hi-lo<65;bright[i]=lo>185
+        }
+        val seen=BooleanArray(pixels.size);val queue=IntArray(pixels.size);val result=IntArray(pixels.size) { Color.WHITE }
+        for(start in pixels.indices) if(dark[start]&&!seen[start]) {
+            var head=0;var tail=1;var edge=0;var whiteEdge=0
+            queue[0]=start;seen[start]=true
+            while(head<tail) {
+                val i=queue[head++];val x=i%w;val y=i/w
+                for(dy in -1..1) for(dx in -1..1) {
+                    val xx=x+dx;val yy=y+dy
+                    if(xx !in 0 until w || yy !in 0 until h) { edge++;continue }
+                    val j=yy*w+xx
+                    if(dark[j]) { if(!seen[j]) { seen[j]=true;queue[tail++]=j } }
+                    else { edge++;if(bright[j])whiteEdge++ }
+                }
+            }
+            // Dark picture details are usually not enclosed by a pale glyph outline.
+            if(tail>=2 && whiteEdge>=3 && whiteEdge>edge*.30) for(n in 0 until tail) result[queue[n]]=Color.BLACK
+        }
+        bitmap.setPixels(result,0,w,0,0,w,h)
+    }
+
+    /** Isolate neutral dark cores or bright lettering from colored comic artwork for OCR only. */
+    fun isolate(bitmap: Bitmap, light: Boolean) {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        for (i in pixels.indices) {
+            val c = pixels[i]; val lo = minOf(Color.red(c), Color.green(c), Color.blue(c)); val hi = maxOf(Color.red(c), Color.green(c), Color.blue(c))
+            val foreground = if (light) lo > 190 else hi < 115 && hi - lo < 55
+            pixels[i] = if (foreground) Color.BLACK else Color.WHITE
+        }
+        bitmap.setPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+    }
+    fun contrast(bitmap: Bitmap) {
+        val w = bitmap.width; val h = bitmap.height
+        val pixels = IntArray(w * h); bitmap.getPixels(pixels, 0, w, 0, 0, w, h)
+        val stride = w + 1; val sum = IntArray((w + 1) * (h + 1))
+        for (y in 0 until h) {
+            var row = 0
+            for (x in 0 until w) {
+                val c = pixels[y * w + x]; val gray = (Color.red(c) * 77 + Color.green(c) * 150 + Color.blue(c) * 29) shr 8
+                pixels[y * w + x] = gray; row += gray; sum[(y + 1) * stride + x + 1] = sum[y * stride + x + 1] + row
+            }
+        }
+        for (y in 0 until h) for (x in 0 until w) {
+            val l = maxOf(0, x - 20); val r = minOf(w, x + 21); val t = maxOf(0, y - 20); val b = minOf(h, y + 21)
+            val mean = (sum[b * stride + r] - sum[t * stride + r] - sum[b * stride + l] + sum[t * stride + l]) / ((r - l) * (b - t))
+            pixels[y * w + x] = if (pixels[y * w + x] < mean - 12) Color.BLACK else Color.WHITE
+        }
+        bitmap.setPixels(pixels, 0, w, 0, 0, w, h)
+    }
+}

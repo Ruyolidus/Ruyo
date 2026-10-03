@@ -57,40 +57,93 @@ private fun AppContent(model: RuyoModel) {
         }
     }
     val snackbars = remember { SnackbarHostState() }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(model::importImage) }
+    var pickerTarget by remember { mutableStateOf<String?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) model.importFiles(uris, pickerTarget)
+        pickerTarget = null
+    }
+    var addComic by remember { mutableStateOf(false) }
+    var newSeries by remember { mutableStateOf(false) }
+    var discardImport by remember { mutableStateOf(false) }
+    fun pickImages(appendTo: String? = null) { pickerTarget = appendTo; picker.launch(arrayOf("image/*", "application/pdf", "application/x-cbz", "application/vnd.comicbook+zip", "application/zip")) }
     var discard by remember { mutableStateOf(false) }
     var remove by remember { mutableStateOf<LocalBook?>(null) }
-    fun back() { if (model.route == "editor") discard = true else model.home() }
+    fun back() {
+        when (model.route) {
+            "editor" -> discard = true
+            "areas" -> model.cancelAreas()
+            "profiles" -> model.closeProfiles()
+            "import" -> discardImport = true
+            "pages" -> model.reader()
+            "book" -> model.leaveReader()
+            "web" -> model.activeSeriesId?.let(model::openSeries) ?: model.home()
+            "prepare" -> model.finishPreparation()
+            "webread" -> model.returnToWebsite()
+            else -> model.home()
+        }
+    }
     BackHandler(model.route != "home" && model.lesson == null) { if (!model.busy) back() }
     LaunchedEffect(model.message) {
         model.message?.let { message ->
-            model.message = null
             snackbars.showSnackbar(message, withDismissAction = true)
+            if (model.message == message) model.message = null
         }
     }
     val home = model.route == "home"
+    val reading = model.route == "book" || model.route == "webread"
     Scaffold(
         modifier = Modifier.testTag("app-root"),
         containerColor = MaterialTheme.colorScheme.background,
-        snackbarHost = { SnackbarHost(snackbars) },
+        snackbarHost = { SnackbarHost(snackbars, Modifier.imePadding().padding(bottom = if (home) 0.dp else 96.dp)) },
         topBar = {
-            Column {
+            if (!reading || !model.readerImmersive) Column {
                 AppBar(
                     title = when (model.route) {
                         "sample" -> "Before the rain"
-                        "book" -> model.opened?.book?.title.orEmpty()
+                        "book" -> model.chapter?.title.orEmpty()
+                        "pages" -> "Chapter pages"
+                        "series" -> model.activeSeries?.title.orEmpty()
+                        "prepare" -> "Prepare chapter"
+                        "import" -> "Add chapter"
+                        "webread" -> model.webReading?.chapter?.title.orEmpty()
+                        "web" -> runCatching { java.net.URI(model.webUrl).host }.getOrNull() ?: "Browse"
                         "editor" -> "Edit bubble"
+                        "areas" -> "Text areas"
+                        "profiles" -> "AI providers"
                         else -> when (model.tab) { "saved" -> "Saved"; "settings" -> "Settings"; else -> "Library" }
                     },
                     back = if (home) null else ({ if (!model.busy) back() }),
                     actions = {
-                        when {
-                            home && model.tab == "library" -> IconButton(onClick = { picker.launch(arrayOf("image/*")) }, enabled = !model.busy) { Icon(AppIcons.Plus, "Import image") }
-                            model.route == "book" -> {
-                                IconButton(onClick = { model.selecting = !model.selecting }, enabled = !model.busy) { Icon(if (model.selecting) AppIcons.Close else AppIcons.Edit, if (model.selecting) "Cancel selection" else "Edit bubbles") }
-                                IconButton(onClick = { remove = model.opened?.book }, enabled = !model.busy) { Icon(AppIcons.Trash, "Remove image") }
+                        if (reading) {
+                            var menu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("reader-menu")) { Icon(AppIcons.More, "Reader menu") }
+                                DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                                    if (model.route != "sample") {
+                                        DropdownMenuItem(text = { Text("Reading controls") }, onClick = { menu = false; model.readerSettingsOpen = true }, modifier = Modifier.testTag("reading-translation-settings"))
+                                        DropdownMenuItem(text = { Text(if (model.selecting) "Finish editing" else "Edit text") }, onClick = { menu = false; model.toggleSelection() }, modifier = Modifier.testTag("reader-edit"))
+                                    }
+                                    DropdownMenuItem(text = { Text("Hide title bar") }, onClick = { menu = false; model.readerImmersive = true })
+                                    if (model.route == "book") {
+                                        HorizontalDivider()
+                                        DropdownMenuItem(text = { Text("Manage chapter pages") }, onClick = { menu = false; model.managePages() })
+                                        DropdownMenuItem(text = { Text("Remove chapter") }, onClick = { menu = false; remove = model.chapter })
+                                    }
+                                }
                             }
-                            model.route == "editor" -> TextButton(onClick = model::saveEdit, enabled = model.draft?.preview != null && !model.busy, modifier = Modifier.testTag("save-edit")) { Text("Save") }
+                        }
+                        when {
+                            home && model.tab == "library" -> {
+                                IconButton(onClick = model::browse, enabled = !model.busy) { Icon(AppIcons.Web, "Browse websites") }
+                                IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add comic") }
+                            }
+                            model.route == "series" -> IconButton(onClick = { addComic = true }, enabled = !model.busy) { Icon(AppIcons.Plus, "Add chapter") }
+                            model.route == "web" -> {
+                                IconButton(onClick = { model.webAddressExpanded = !model.webAddressExpanded }, enabled = !model.busy, modifier = Modifier.testTag("toggle-web-address")) {
+                                    Icon(if (model.webAddressExpanded) AppIcons.Close else AppIcons.Search, if (model.webAddressExpanded) "Close address bar" else "Enter website address")
+                                }
+                            }
+                            model.route == "editor" -> TextButton(onClick = model::saveEdit, enabled = model.draft?.preview != null && !model.busy && model.aiStatus == null, modifier = Modifier.testTag("save-edit")) { Text("Save") }
                         }
                     },
                 )
@@ -114,25 +167,55 @@ private fun AppContent(model: RuyoModel) {
         },
     ) { padding ->
         Box(Modifier.fillMaxSize().padding(padding)) {
+            if (model.route == "web") WebBrowserScreen(model)
+            Box(Modifier.fillMaxSize().then(if (model.route != "web") Modifier.background(MaterialTheme.colorScheme.background) else Modifier)) {
             when (model.route) {
                 "sample" -> SampleReader(model)
-                "book" -> BookReader(model)
+                "book" -> key(model.chapter?.id) { BookReader(model) }
+                "pages" -> ChapterPagesScreen(model) { pickImages(model.chapter?.id) }
+                "import" -> ImportReviewScreen(model) { pickImages(model.importing?.appendTo) }
+                "web" -> Unit
+                "series" -> SeriesScreen(model) { addComic = true }
+                "prepare" -> PreparationScreen(model)
+                "webread" -> WebReaderScreen(model)
                 "editor" -> model.draft?.let { BubbleEditorScreen(model, it) }
+                "areas" -> model.areaSelection?.let { BubbleAreasScreen(model, it) }
+                "profiles" -> ProviderProfilesScreen(model)
                 else -> when (model.tab) {
                     "saved" -> SavedScreen(model)
                     "settings" -> SettingsScreen(model)
-                    else -> LibraryScreen(model) { picker.launch(arrayOf("image/*")) }
+                    else -> LibraryScreen(model) { addComic = true }
                 }
             }
+            }
         }
+    }
+    if (addComic) AlertDialog(onDismissRequest = { addComic = false }, title = { Text("Add a comic") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Import a chapter into " + (model.activeSeries?.title ?: "your library") + ".")
+            OutlinedButton(onClick = { addComic = false; pickImages() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Image, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Images, PDF or CBZ") }
+            OutlinedButton(onClick = { addComic = false; newSeries = true }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Library, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("New series") }
+            OutlinedButton(onClick = { addComic = false; model.browse() }, modifier = Modifier.fillMaxWidth()) { Icon(AppIcons.Web, null, Modifier.size(18.dp)); Spacer(Modifier.width(10.dp)); Text("Open website") }
+        } }, confirmButton = {}, dismissButton = { TextButton(onClick = { addComic = false }) { Text("Cancel") } })
+    if (newSeries) SeriesNameDialog(dismiss = { newSeries = false }, save = { model.createSeries(it) })
+    if (discardImport) AlertDialog(onDismissRequest = { discardImport = false }, title = { Text("Discard this import?") },
+        text = { Text("These new pages have not been saved to your library.") },
+        confirmButton = { TextButton(onClick = { discardImport = false; model.discardImport() }) { Text("Discard") } },
+        dismissButton = { TextButton(onClick = { discardImport = false }) { Text("Keep reviewing") } })
+    model.importProgress?.let { progress ->
+        AlertDialog(onDismissRequest = {}, title = { Text("Preparing chapter") },
+            text = { Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                LinearProgressIndicator(progress = { progress.done.toFloat() / progress.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth())
+                Text("${progress.done} of ${progress.total} images ready")
+            } }, confirmButton = {}, dismissButton = { TextButton(onClick = model::cancelImportWork) { Text("Cancel import") } })
     }
     model.lesson?.let { StudySheet(model, it) }
     if (discard) AlertDialog(onDismissRequest = { discard = false }, title = { Text("Discard this edit?") },
         text = { Text("Changes since your last save will be lost. The original image is kept.") },
         confirmButton = { TextButton(onClick = { discard = false; model.cancelEditor() }) { Text("Discard") } },
         dismissButton = { TextButton(onClick = { discard = false }) { Text("Keep editing") } })
-    remove?.let { book -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove image?") },
-        text = { Text("Remove this image and its bubble edits from Ruyo? The file you imported from your device will stay where it is.") },
+    remove?.let { book -> AlertDialog(onDismissRequest = { remove = null }, title = { Text("Remove chapter?") },
+        text = { Text("Remove this chapter, its pages, and bubble edits from Ruyo? Original files outside Ruyo stay where they are.") },
         confirmButton = { TextButton(onClick = { remove = null; model.removeBook(book) }) { Text("Remove") } },
         dismissButton = { TextButton(onClick = { remove = null }) { Text("Cancel") } }) }
 }
@@ -154,14 +237,16 @@ private fun LibraryScreen(model: RuyoModel, onImport: () -> Unit) {
     var filter by rememberSaveable { mutableStateOf("All") }
     var query by rememberSaveable { mutableStateOf("") }
     var searching by rememberSaveable { mutableStateOf(false) }
-    val books = model.books.filter { it.title.contains(query, ignoreCase = true) }
+    val grouped = model.series.flatMap { it.chapters }.toSet()
+    val books = model.books.filter { it.id !in grouped && it.title.contains(query, ignoreCase = true) }
+    val groups = model.series.filter { group -> group.title.contains(query, ignoreCase = true) || model.orderedChapters(group.id).any { it.title.contains(query, ignoreCase = true) } }
     val sampleVisible = filter != "Imported" && "Before the rain".contains(query, ignoreCase = true)
     LazyVerticalGrid(columns = GridCells.Adaptive(148.dp), modifier = Modifier.fillMaxSize().testTag("library-screen"),
         contentPadding = PaddingValues(20.dp), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalArrangement = Arrangement.spacedBy(22.dp)) {
         item(span = { GridItemSpan(maxLineSpan) }) {
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("${model.books.size + 1} ${if (model.books.isEmpty()) "title" else "titles"}", style = MaterialTheme.typography.bodyMedium,
+                    Text("${model.series.size} series · ${model.books.size} chapters", style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f))
                     IconButton(onClick = { searching = !searching; if (!searching) query = "" }, modifier = Modifier.size(40.dp)) { Icon(if (searching) AppIcons.Close else AppIcons.Search, if (searching) "Close search" else "Search library", Modifier.size(20.dp)) }
                 }
@@ -177,22 +262,29 @@ private fun LibraryScreen(model: RuyoModel, onImport: () -> Unit) {
         if (sampleVisible && model.ready) item(key = "sample") {
             BookCover(model.samples.firstOrNull()?.translated, "Before the rain", "Sample · 3 panels", "book-sample", onClick = model::openSample)
         }
-        if (filter != "Samples" && model.ready) items(books, key = { it.id }) { book ->
-            val cover by produceState<Bitmap?>(null, book.id) { value = withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
-            BookCover(cover, book.title, "Imported image", "book-${book.id}") { model.openBook(book) }
+        if (filter != "Samples" && model.ready) items(groups, key = { "series-" + it.id }) { group ->
+            val chapters = model.orderedChapters(group.id)
+            val cover by produceState<Bitmap?>(null, group.id, chapters.firstOrNull()?.id) {
+                value = chapters.firstOrNull()?.let { book -> withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
+            }
+            BookCover(cover, group.title, "${chapters.size} chapters", "series-${group.id}") { model.openSeries(group.id) }
         }
-        if (model.ready && (filter == "Imported" && books.isEmpty() || query.isNotBlank() && books.isEmpty() && !sampleVisible)) item(span = { GridItemSpan(maxLineSpan) }) {
-            EmptyState(AppIcons.Image, if (query.isBlank()) "No imported images" else "No matching titles",
-                if (query.isBlank()) "Add a comic image from your device to start editing its bubbles." else "Try another title.") {
-                if (query.isBlank()) Button(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Import image") }
+        if (filter != "Samples" && model.ready) items(books, key = { it.id }) { book ->
+            val cover by produceState<Bitmap?>(null, book.id, book.pages.first().id) { value = withContext(Dispatchers.IO) { model.store.thumbnail(book.id) } }
+            BookCover(cover, book.title, "${book.pages.size} ${if (book.pages.size == 1) "page" else "pages"}", "book-${book.id}") { model.openBook(book) }
+        }
+        if (model.ready && (filter == "Imported" && books.isEmpty() && groups.isEmpty() || query.isNotBlank() && books.isEmpty() && groups.isEmpty() && !sampleVisible)) item(span = { GridItemSpan(maxLineSpan) }) {
+            EmptyState(AppIcons.Image, if (query.isBlank()) "No imported chapters" else "No matching titles",
+                if (query.isBlank()) "Choose your comic images or open a chapter link to start reading." else "Try another title.") {
+                if (query.isBlank()) Button(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add chapter") }
             }
         }
-        if (model.books.isEmpty() && filter == "All" && query.isBlank() && model.ready) item(span = { GridItemSpan(maxLineSpan) }) {
+        if (model.books.isEmpty() && model.series.isEmpty() && filter == "All" && query.isBlank() && model.ready) item(span = { GridItemSpan(maxLineSpan) }) {
             Column(Modifier.fillMaxWidth().padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 Text("Add your own comic", style = MaterialTheme.typography.titleMedium)
-                Text("Import an image to select bubbles and try your own Japanese text.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                OutlinedButton(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Import image") }
+                Text("Import images, a PDF, a CBZ, or a chapter link. Organize chapters into series and prepare translations before reading.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                OutlinedButton(onClick = onImport, enabled = !model.busy) { Icon(AppIcons.Plus, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp)); Text("Add chapter") }
             }
         }
     }
@@ -206,7 +298,7 @@ private fun BookCover(bitmap: Bitmap?, title: String, subtitle: String, tag: Str
             if (bitmap != null) Image(bitmap.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             else Icon(AppIcons.Image, null, Modifier.size(28.dp).align(Alignment.Center), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Surface(Modifier.align(Alignment.BottomStart).padding(8.dp), color = MaterialTheme.colorScheme.surface.copy(alpha = 0.94f), shape = RoundedCornerShape(3.dp)) {
-                Text(if (tag == "book-sample") "SAMPLE" else "LOCAL", Modifier.padding(horizontal = 6.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
+                Text(if (tag == "book-sample") "SAMPLE" else if (tag.startsWith("series-")) "SERIES" else "LOCAL", Modifier.padding(horizontal = 6.dp, vertical = 3.dp), style = MaterialTheme.typography.labelSmall)
             }
         }
         Spacer(Modifier.height(10.dp))
@@ -218,13 +310,13 @@ private fun BookCover(bitmap: Bitmap?, title: String, subtitle: String, tag: Str
 @Composable
 private fun SavedScreen(model: RuyoModel) {
     if (model.saved.isEmpty()) {
-        EmptyState(AppIcons.Bookmark, "No saved sentences", "Tap a Japanese bubble while reading, then save the sentence to revisit it here.") {
+        EmptyState(AppIcons.Bookmark, "No saved sentences", "Tap a translated bubble while reading, then save the sentence to revisit it here.") {
             OutlinedButton(onClick = model::openSample, enabled = model.ready) { Text("Read sample") }
         }
     } else LazyColumn(Modifier.fillMaxSize().testTag("saved-screen"), contentPadding = PaddingValues(vertical = 12.dp)) {
         item { Text("${model.saved.size} ${if (model.saved.size == 1) "sentence" else "sentences"}", Modifier.padding(horizontal = 20.dp, vertical = 10.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         items(model.saved, key = { it.id }) { line ->
-            Column(Modifier.fillMaxWidth().clickable { model.lesson = line }.padding(horizontal = 20.dp, vertical = 18.dp)) {
+            Column(Modifier.fillMaxWidth().clickable { model.showLesson(line) }.padding(horizontal = 20.dp, vertical = 18.dp)) {
                 Text(line.japanese, fontSize = 20.sp, lineHeight = 30.sp)
                 Text(line.source, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -251,16 +343,41 @@ private fun SettingsScreen(model: RuyoModel) {
             }
         }
         item {
+            SectionLabel("Translation")
+            LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy, tag = "default-language")
+            Text("New edits use this language. Existing translations keep theirs.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            SectionLabel("Learning")
+            var levels by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { levels = true }, modifier = Modifier.fillMaxWidth().testTag("learner-level")) {
+                    Text("Your level", Modifier.weight(1f)); Text(model.learnerLevel.label)
+                }
+                DropdownMenu(levels, onDismissRequest = { levels = false }) {
+                    com.ruyo.ai.LearnerLevel.entries.forEach { level ->
+                        DropdownMenuItem(text = { Text(level.label) }, onClick = { levels = false; model.changeLearnerLevel(level) })
+                    }
+                }
+            }
+            LanguagePicker(model.explanationLanguage, model::changeExplanationLanguage, tag = "explanation-language", label = "Explain in")
+            Text("Lessons stay at the level you choose. Reading help covers every word; practice loads when you ask for it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            OutlinedButton(onClick = model::editProfiles, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("manage-providers")) { Text("Manage AI providers") }
+        }
+        item {
             SectionLabel("On this device")
-            SettingLine("Imported images", model.books.size.toString())
+            SettingLine("Imported chapters", model.books.size.toString())
+            SettingLine("Pages", model.books.sumOf { it.pages.size }.toString())
             SettingLine("Saved sentences", model.saved.size.toString())
             Text("Images and edits are stored on this device. Your source files are kept intact.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             SectionLabel("About")
-            SettingLine("Ruyo", "0.2.0 preview")
-            Text("Read comics. Study Japanese.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text("This build includes manual bubble editing and sample lessons. AI translation and website imports are being developed.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SettingLine("Ruyo", com.ruyo.BuildConfig.VERSION_NAME + " · " + com.ruyo.BuildConfig.VERSION_CODE)
+            Text("Read comics. Learn a language.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("Import chapter images, PDFs, or CBZs into named series. Prepare translations before reading, then switch between Original and Translated. Tap translated dialogue for grammar, vocabulary, examples, and practice.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

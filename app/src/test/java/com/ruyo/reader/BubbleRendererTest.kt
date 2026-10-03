@@ -25,7 +25,7 @@ class BubbleRendererTest {
             val fit = page.replacement
             assertEquals(page.line.japanese, fit.lines.joinToString("") { fit.text.substring(it.start, it.end) })
             assertEquals(0, page.safeRegion.outsideInkCount(fit.ink))
-            assertTrue(fit.fontSize >= 34f)
+            assertTrue(fit.fontSize in 24f..40f)
         }
     }
 

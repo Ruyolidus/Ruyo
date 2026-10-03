@@ -1,0 +1,187 @@
+package com.ruyo.reader
+
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Canvas
+import android.graphics.Color
+import com.ruyo.ai.OcrLine
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.*
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.util.UUID
+import org.robolectric.RuntimeEnvironment
+import com.ruyo.data.LocalBookStore
+
+/** Pixel regressions use the user's original English lettering, not a synthetic font. */
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class RealPageCleanupTest {
+    private fun source(name: String): Bitmap {
+        val image = requireNotNull(BitmapFactory.decodeFile(File(System.getProperty("ruyo.fixtureDir"), "$name.jpg").path))
+        return Bitmap.createBitmap(image, 0, 284, image.width, 1180).also { image.recycle() }
+    }
+    private fun clean(source: Bitmap, region: BubbleRegion): Bitmap {
+        val output = source.copy(Bitmap.Config.ARGB_8888, true)
+        val crop = Bitmap.createBitmap(BubbleEditRenderer.cleanedPixels(source, region), region.width, region.height, Bitmap.Config.ARGB_8888)
+        Canvas(output).drawBitmap(crop, region.left.toFloat(), region.top.toFloat(), null); crop.recycle()
+        return output
+    }
+    private fun preview(name: String, bitmap: Bitmap) {
+        val file = File(System.getProperty("ruyo.previewDir"), "actual-$name-cleanup.png")
+        file.parentFile!!.mkdirs(); file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+    }
+    @Test fun joinedBalloonParagraphsHaveCompleteMasksWithoutTouchingTheirSpikyBorders() {
+        val source = source("joined-dialogue")
+        val upper = listOf(OcrLine("I CAME TO",192,409,327,444), OcrLine("CLEAN UP AS FATHER",109,450,396,477), OcrLine("ORDERED BUT...",136,488,366,519))
+        val lower = listOf(OcrLine("THIS PLACE",363,594,524,623), OcrLine("LOOKS LIKE A WAR",304,630,578,668), OcrLine("BROKE OUT",346,670,529,703))
+        var result = source.copy(Bitmap.Config.ARGB_8888, true)
+        for (lines in listOf(upper, lower)) {
+            val region = requireNotNull(TextRegionRepair.select(source, lines, upper + lower))
+            val next = clean(result, region); result.recycle(); result = next
+            for (line in lines) {
+                var remaining = 0
+                for (y in line.top until line.bottom) for (x in line.left until line.right) if (Color.red(result.getPixel(x,y)) < 130) remaining++
+                assertTrue("Original letters survived in ${line.text}: $remaining", remaining < 8)
+            }
+        }
+        assertEquals(source.getPixel(445,430),result.getPixel(445,430))
+        preview("joined",result); result.recycle(); source.recycle()
+    }
+    @Test fun originalRankDialogueKeepsBothJoinedBubblesIndependentAndCompletelyClean() = runBlocking {
+        val source=source("rank-dialogue")
+        val upper=listOf(OcrLine("AT LEAST",201,384,361,414),OcrLine("S-RANK... NO,",167,420,398,452))
+        val lower=listOf(OcrLine("I'D PUT HIM",354,622,560,653),OcrLine("ON PAR WITH AN",310,659,605,692),
+            OcrLine("SS-RANK HUNTER",306,696,605,725),OcrLine("OR HIGHER.",357,733,553,764))
+        val areas=AutoBubbleDetector.analyze(source,upper+lower)
+        assertEquals(2,areas.size)
+        val regions=areas.map { requireNotNull(it.region) { "Skipped ${it.source}" } }
+        assertFalse(regions[0].overlaps(regions[1]))
+        var result=source.copy(Bitmap.Config.ARGB_8888,true)
+        for(region in regions) { val next=clean(result,region);result.recycle();result=next }
+        for(line in upper+lower) {
+            var remaining=0
+            for(y in line.top until line.bottom) for(x in line.left until line.right) if(Color.red(result.getPixel(x,y))<120) remaining++
+            assertTrue("Original letters remain in ${line.text}: $remaining",remaining<8)
+        }
+        preview("rank",result)
+        val edits=areas.mapIndexed { i,area -> BubbleEdit(region=requireNotNull(area.region),
+            japanese=if(i==0) "少なくともSランク…いや、" else "SSランクのハンターと同等か、それ以上だろう。",margin=4,
+            matchSourceSize=true,sourceLetterHeight=31f) }
+        val translated=BubbleEditRenderer.composite(source,edits)
+        preview("rank-translated",translated)
+        result.recycle();source.recycle();translated.recycle()
+    }
+    @Test fun touchingOutlinesAcrossTwoSlantedLinesAreRepairedTogether() {
+        val source=source("joined-dialogue")
+        val lines=mutableListOf(OcrLine("Don't let anyone",205,882,371,926),OcrLine("approach.",238,906,343,952))
+        com.ruyo.ai.OcrTiles.coverDetectedLettering(lines,listOf(android.graphics.Rect(189,863,386,940),android.graphics.Rect(223,895,360,967)))
+        val region=requireNotNull(TextRegionRepair.selectArtwork(source,lines))
+        val cleaned=clean(source,region)
+        var original=0;var remaining=0
+        for(y in 885..943) for(x in 220..361) {
+            fun bright(c:Int)=minOf(Color.red(c),Color.green(c),Color.blue(c))>230
+            if(bright(source.getPixel(x,y))) original++
+            if(bright(cleaned.getPixel(x,y))) remaining++
+        }
+        assertTrue("Pale outlines survive local repair: $remaining / $original",remaining<original*.05)
+        preview("slanted-outline",cleaned)
+        source.recycle();cleaned.recycle()
+    }
+    @Test fun brownEffectRemovesSolidLetterCentersAndPreservesTheBlackBalloonLine() {
+        val source = source("pale-dialogue")
+        // Actual device OCR included a curve mistaken for a leading dash. The
+        // enlarged crop meets pale antialias pixels before the curve's dark core.
+        val line = OcrLine("-GIGGLE",206,77,481,207)
+        val region = requireNotNull(TextRegionRepair.select(source,listOf(line)))
+        assertFalse("A white background must not be rebuilt from remaining brown ink",region.inpaint)
+        val result = clean(source,region)
+        var remaining = 0; var original = 0
+        fun brown(c:Int) = Color.red(c) in 45..190 && Color.red(c) > Color.green(c) * 1.35 && Color.green(c) > Color.blue(c) * 1.1
+        for (y in 77 until 209) for (x in 230 until 454) {
+            if (brown(source.getPixel(x,y))) original++
+            if (brown(result.getPixel(x,y))) remaining++
+        }
+        assertTrue("Brown source ink remains: $remaining / $original", remaining < original * .02)
+        assertEquals(source.getPixel(218,126),result.getPixel(218,126))
+        var borderPixels = 0
+        for (y in 110..220) for (x in 150..249) {
+            val originalPixel = source.getPixel(x,y)
+            if (Color.red(originalPixel) < 210 &&
+                maxOf(Color.red(originalPixel),Color.green(originalPixel),Color.blue(originalPixel)) -
+                    minOf(Color.red(originalPixel),Color.green(originalPixel),Color.blue(originalPixel)) <= 8) {
+                borderPixels++
+                assertEquals("The bubble curve was erased at $x,$y", originalPixel, result.getPixel(x,y))
+            }
+        }
+        assertTrue("Fixture must contain the bubble curve",borderPixels > 100)
+        preview("effect",result); result.recycle(); source.recycle()
+    }
+    @Test fun italicCaptionLeadingStrokeOutsideTheOcrBoxIsAlsoRemoved() {
+        val source = source("outlined-caption")
+        val lines = listOf(OcrLine("NORMALLY, I WOULD HAVE",179,33,498,64),OcrLine("JUST WALKED PAST WITHOUT",160,73,522,101),OcrLine("A SECOND GLANCE, BUT...",204,111,495,148))
+        val region = requireNotNull(TextRegionRepair.select(source,lines))
+        val result = clean(source,region)
+        var remaining = 0
+        for (y in 28 until 153) for (x in 155 until 527) if (Color.red(result.getPixel(x,y)) < 100) remaining++
+        assertTrue("Dark caption strokes survived cleanup: $remaining",remaining < 8)
+        var outline = 0
+        val surface = requireNotNull(region.backgroundSurface)
+        for (y in 28 until 153) for (x in 155 until 527) {
+            val actual=result.getPixel(x,y);val expected=surface.colorAt(x,y)
+            if (kotlin.math.abs(Color.red(actual)-Color.red(expected)) > 8) outline++
+        }
+        assertTrue("Caption outlines or shadows survived cleanup: $outline",outline < 20)
+        preview("caption",result); result.recycle(); source.recycle()
+    }
+    @Test fun adjacentCommentRowsDoNotDisappearWhenOnlyTheirEmptyPaddingTouches() = runBlocking {
+        val source = source("page-comments")
+        val lines = mutableListOf(OcrLine("oo(111.222)",40,573,194,605),OcrLine("THE SMART ONES QUIT FIRST.",20,626,344,651))
+        com.ruyo.ai.OcrTiles.coverDetectedLettering(lines,listOf(android.graphics.Rect(34,565,203,610),android.graphics.Rect(17,619,348,653)))
+        val areas = AutoBubbleDetector.analyze(source,lines)
+        assertEquals(2,areas.size)
+        val regions=areas.map { requireNotNull(it.region) { "Skipped ${it.source}" } }
+        assertFalse(regions[0].overlaps(regions[1]))
+        var result=source.copy(Bitmap.Config.ARGB_8888,true)
+        for (region in regions) { val next=clean(result,region);result.recycle();result=next }
+        var remaining=0
+        for(y in 623..653) for(x in 17..346) if(Color.red(result.getPixel(x,y))<90) remaining++
+        assertTrue("The English sentence was not completely removed: $remaining",remaining<8)
+        val surface=requireNotNull(regions[1].backgroundSurface) { "A pale comment row needs smooth background repair" }
+        var outlines=0
+        for(y in 623..653) for(x in 17..346) if(kotlin.math.abs(Color.red(result.getPixel(x,y))-Color.red(surface.colorAt(x,y)))>12) outlines++
+        assertTrue("Pale outlines remain after removing the black letters: $outlines",outlines<25)
+        preview("comment",result);result.recycle();source.recycle()
+    }
+    @Test fun blueCaptionRemovesBothBrightLettersAndTheirDarkShadowsAndReopensExactly() = runBlocking {
+        val source=source("blue-caption")
+        val lines=listOf(OcrLine("A BATTLE AGAINST EVIL",150,424,536,464),OcrLine("DARK MAGES HAS BEGUN!",138,476,548,518))
+        val region=requireNotNull(TextRegionRepair.select(source,lines))
+        assertFalse("A smooth blue panel should not reuse letter shadows as inpainting colors",region.inpaint)
+        val surface=requireNotNull(region.backgroundSurface)
+        val result=clean(source,region)
+        var remnants=0
+        for(y in 416..530) for(x in 126..558) {
+            val actual=result.getPixel(x,y);val bg=surface.colorAt(x,y)
+            if(maxOf(kotlin.math.abs(Color.red(actual)-Color.red(bg)),kotlin.math.abs(Color.green(actual)-Color.green(bg)),kotlin.math.abs(Color.blue(actual)-Color.blue(bg)))>12) remnants++
+        }
+        assertTrue("Original caption shadows survived: $remnants",remnants<25)
+        preview("blue-shadows",result)
+        val root=File(RuntimeEnvironment.getApplication().cacheDir,"curved-"+UUID.randomUUID())
+        try {
+            val store=LocalBookStore(RuntimeEnvironment.getApplication(),root,File(root,"stage"))
+            val book=store.addBitmap("Blue caption",source)
+            val edit=BubbleEdit(region=region,japanese="読めた。",margin=4)
+            store.saveEdit(book.id,source,edit)
+            val reopened=store.open(book)
+            assertEquals(surface,reopened.edits.single().region.backgroundSurface)
+            val expected=BubbleEditRenderer.composite(source,listOf(edit))
+            assertTrue(expected.sameAs(reopened.displayed));expected.recycle()
+        } finally { root.deleteRecursively();result.recycle();source.recycle() }
+    }
+}

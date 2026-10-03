@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.22.1)
+project(ruyo_repair LANGUAGES CXX)
+add_library(ruyo_repair SHARED patch_repair.cpp repair_jni.cpp)
+target_compile_features(ruyo_repair PRIVATE cxx_std_17)
+target_compile_options(ruyo_repair PRIVATE -Wall -Wextra -O2)
+target_link_options(ruyo_repair PRIVATE "-Wl,-z,max-page-size=16384")

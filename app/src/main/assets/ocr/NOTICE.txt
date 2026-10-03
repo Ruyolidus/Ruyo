@@ -1,0 +1,6 @@
+PP-OCRv5_mobile_det ONNX weights
+Copyright PaddlePaddle Authors. Licensed under the Apache License, Version 2.0.
+Source: https://huggingface.co/PaddlePaddle/PP-OCRv5_mobile_det_onnx
+SHA-256: a431985659dc921974177a95adcfbb90fd9e51989a5e04d70d0b75f597b6e61d
+The model is unmodified. Ruyo's Kotlin preprocessing and integration are separate code.
+Inference uses ONNX Runtime (Microsoft), MIT licensed. Its license is retained in the dependency.

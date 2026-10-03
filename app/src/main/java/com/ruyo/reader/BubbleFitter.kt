@@ -7,7 +7,9 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import android.icu.text.BreakIterator
 import android.text.TextPaint
-import java.util.Locale
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
 import kotlin.math.ceil
 
 data class TextLine(val start: Int, val end: Int, val x: Float, val baseline: Float)
@@ -31,34 +33,52 @@ class BubbleFitter {
         preferredSize: Float = 64f,
         minimumSize: Float = 34f,
         textColor: Int = Color.rgb(39, 42, 53),
+        languageTag: String = "ja",
+        typeface: Typeface = Typeface.create("sans-serif", Typeface.NORMAL),
+        letteringStyle: LetteringStyle = LetteringStyle.SOLID,
+        fillOpacity: Float = .4f,
+        contrastOutline: Boolean = false,
     ): FitResult {
         require(preferredSize.isFinite() && minimumSize.isFinite())
+        require(fillOpacity.isFinite() && fillOpacity in 0f..1f)
         require(minimumSize > 0f && preferredSize >= minimumSize)
         val text = input.replace("\r\n", " ").replace('\n', ' ').replace('\r', ' ')
         if (text.isBlank() || text.length > 512) return FitResult.Rejected("Text is empty or exceeds this preview's layout limit.")
 
+        val locale = TextLanguages.locale(languageTag)
+        val selectedTypeface = typeface
         val paint = TextPaint(Paint.ANTI_ALIAS_FLAG or Paint.SUBPIXEL_TEXT_FLAG).apply {
             color = textColor
-            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
-            textLocale = Locale.JAPAN
+            this.typeface = selectedTypeface
+            textLocale = locale
         }
-        val graphemes = boundaries(text, BreakIterator.getCharacterInstance(Locale.JAPANESE))
-        for (i in 0 until graphemes.lastIndex) {
-            val glyph = text.substring(graphemes[i], graphemes[i + 1])
-            if (!glyph.isBlank() && !paint.hasGlyph(glyph)) return FitResult.Rejected("A character is unavailable in the current font.")
+        val graphemes = boundaries(text, BreakIterator.getCharacterInstance(locale))
+        var point = 0
+        while (point < text.length) {
+            val code = text.codePointAt(point)
+            val type = Character.getType(code)
+            val combining = type in listOf(Character.NON_SPACING_MARK.toInt(), Character.COMBINING_SPACING_MARK.toInt(), Character.ENCLOSING_MARK.toInt(), Character.FORMAT.toInt())
+            val glyph = String(Character.toChars(code))
+            if (!combining && !glyph.isBlank() && !paint.hasGlyph(glyph)) return FitResult.Rejected("A character is unavailable in this device's fonts. Try another font or language.")
+            point += Character.charCount(code)
         }
-        val breaks = boundaries(text, BreakIterator.getLineInstance(Locale.JAPANESE))
-            .filter { it in graphemes && legalBreak(text, it) }
+        val breaks = boundaries(text, BreakIterator.getLineInstance(locale))
+            .filter { it in graphemes && (locale.language !in listOf("ja", "zh") || legalBreak(text, it)) }
+        val direction = if (TextDirectionHeuristics.FIRSTSTRONG_LTR.isRtl(text, 0, text.length)) TextDirectionHeuristics.RTL else TextDirectionHeuristics.LTR
         val centerY = safeRegion.centerY()
-        val budget = LayoutBudget()
-        val steps = ceil((preferredSize - minimumSize) / 2f).toInt()
+        val steps = ceil((preferredSize - minimumSize) / 2f).toInt().coerceAtMost(64)
+        // Reserve shaping work for EVERY size, including the minimum. A difficult
+        // large-font layout must not exhaust the search before shrink-to-fit runs.
         for (step in 0..steps) {
-            val size = maxOf(minimumSize, preferredSize - step * 2f)
+            val budget = LayoutBudget(8_000 / (steps + 1))
+            val size = if (steps == 0) preferredSize else maxOf(minimumSize, preferredSize - (preferredSize - minimumSize) * step / steps)
             paint.textSize = size
+            val stroke = (size * .035f).coerceIn(.65f, 2.5f)
             val metrics = paint.fontMetrics
-            val lineHeight = ceil(metrics.bottom - metrics.top + size * 0.08f + 4f).toInt()
-            val maxLines = minOf(12, safeRegion.height / lineHeight, graphemes.lastIndex)
-            for (count in 1..maxLines) {
+            val lineHeight = ceil(metrics.bottom - metrics.top + size * 0.08f + if (size < 12f) 1f else 4f).toInt()
+            val maxLines = minOf(32, safeRegion.height / lineHeight, graphemes.lastIndex)
+            val firstCount = maxOf(1, (paint.measureText(text) / safeRegion.width).toInt()).coerceAtMost(maxOf(1, maxLines))
+            for (count in firstCount..maxLines) {
                 val centeredTop = (centerY - count * lineHeight / 2f).toInt()
                 for (shift in intArrayOf(0, lineHeight / 5, -lineHeight / 5)) {
                     val top = centeredTop + shift
@@ -68,29 +88,70 @@ class BubbleFitter {
                     if (spans.any { it == null || it.count() < size }) continue
                     val validSpans = spans.filterNotNull()
                     val cuts = wrap(text, breaks, validSpans, paint, budget)
-                    if (budget.exhausted) return FitResult.Rejected("No safe layout was found within the layout limit. Try shorter text or a larger bubble.")
+                    if (budget.exhausted) break
                     if (cuts == null) continue
+                    val layouts = cuts.map { (start, end) ->
+                        val width = ceil(Layout.getDesiredWidth(text, start, end, paint) + size * 4).toInt().coerceAtLeast(1)
+                        StaticLayout.Builder.obtain(text, start, end, paint, width)
+                            .setAlignment(Layout.Alignment.ALIGN_NORMAL).setTextDirection(direction)
+                            .setIncludePad(false).build()
+                    }
+                    if (layouts.any { it.lineCount != 1 || it.height > lineHeight }) continue
                     val lines = cuts.mapIndexed { i, (start, end) ->
                         val span = validSpans[i]
                         TextLine(
                             start, end,
-                            span.first + (span.count() - paint.measureText(text, start, end)) / 2f,
-                            top + i * lineHeight - metrics.top + 2f,
+                            span.first + (span.count() - layouts[i].getLineWidth(0)) / 2f,
+                            top + i * lineHeight + (lineHeight - layouts[i].height) / 2f + layouts[i].getLineBaseline(0),
                         )
                     }
                     if (lines.joinToString("") { text.substring(it.start, it.end) } != text) continue
                     val ink = Bitmap.createBitmap(safeRegion.width, safeRegion.height, Bitmap.Config.ARGB_8888)
                     val canvas = Canvas(ink)
-                    lines.forEach { canvas.drawText(text, it.start, it.end, it.x, it.baseline, paint) }
+                    lines.forEachIndexed { index, line ->
+                        val layout = layouts[index]
+                        canvas.save()
+                        canvas.translate(line.x - layout.getLineLeft(0), line.baseline - layout.getLineBaseline(0))
+                        paint.strokeJoin = Paint.Join.ROUND
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = stroke
+                        paint.alpha = 255
+                        if (letteringStyle == LetteringStyle.OUTLINE) {
+                            paint.color = textColor
+                            layout.draw(canvas)
+                        } else {
+                            if (contrastOutline || letteringStyle == LetteringStyle.TRANSLUCENT) {
+                                val light = Color.red(textColor) + Color.green(textColor) + Color.blue(textColor) > 384
+                                paint.color = if (light) Color.BLACK else Color.WHITE
+                                paint.strokeWidth = stroke * 2
+                                layout.draw(canvas)
+                            }
+                            paint.style = Paint.Style.FILL
+                            if (letteringStyle == LetteringStyle.TRANSLUCENT) {
+                                // Keep the contrast rim outside the glyph. Otherwise two opaque
+                                // stroke edges can cover the entire interior of a thin font.
+                                paint.alpha = 255
+                                paint.xfermode = android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.DST_OUT)
+                                layout.draw(canvas)
+                                paint.xfermode = null
+                            }
+                            paint.color = textColor
+                            paint.alpha = if (letteringStyle == LetteringStyle.TRANSLUCENT) (fillOpacity * 255).toInt() else 255
+                            layout.draw(canvas)
+                        }
+                        paint.style = Paint.Style.FILL; paint.color = textColor; paint.alpha = 255
+                        canvas.restore()
+                    }
                     // No clip has been used: this inspects actual antialiased glyph pixels.
                     if (safeRegion.outsideInkCount(ink) == 0 && hasInk(ink)) {
                         return FitResult.Accepted(text, size, lines, ink)
                     }
                     ink.recycle()
                 }
+                if (budget.exhausted) break
             }
         }
-        return FitResult.Rejected("The complete sentence cannot fit at a readable size.")
+        return FitResult.Rejected("The whole text still does not fit after shrinking. Reduce the padding or shorten the text.")
     }
 
     private fun wrap(
@@ -105,10 +166,11 @@ class BubbleFitter {
             if (line == spans.size) return if (start == text.length) emptyList() else null
             if (start == text.length || (line to start) in failed) return null
             val remaining = spans.size - line - 1
+            val fittingEnd = budget.fittingEnd(paint, text, start, spans[line].count() - 4f)
             for (end in breaks.asReversed()) {
                 if (budget.exhausted) return null
-                if (end <= start || (remaining > 0 && end == text.length)) continue
-                if (budget.measure(paint, text, start, end) > spans[line].count() - 4f) continue
+                if (end <= start || end > fittingEnd || (remaining > 0 && end == text.length)) continue
+                if (remaining == 0 && end != text.length) continue
                 val tail = visit(line + 1, end)
                 if (tail != null) return listOf(start to end) + tail
             }
@@ -119,13 +181,17 @@ class BubbleFitter {
     }
 
     /** Bound native shaping calls even for adversarially long or awkward text. */
-    private class LayoutBudget {
-        private var remaining = 8_000
+    private class LayoutBudget(private var remaining: Int) {
+        private val fitted = mutableMapOf<Pair<Int, Float>, Int>()
         var exhausted = false
             private set
-        fun measure(paint: TextPaint, text: String, start: Int, end: Int): Float {
-            if (remaining-- <= 0) { exhausted = true; return Float.POSITIVE_INFINITY }
-            return paint.measureText(text, start, end)
+        fun fittingEnd(paint: TextPaint, text: String, start: Int, width: Float): Int {
+            val key = start to width
+            fitted[key]?.let { return it }
+            if (remaining-- <= 0) { exhausted = true; return start }
+            val end = start + paint.breakText(text, start, text.length, true, width, null)
+            fitted[key] = end
+            return end
         }
     }
 
