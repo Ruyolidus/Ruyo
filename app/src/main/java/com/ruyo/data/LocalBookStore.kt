@@ -30,7 +30,7 @@ data class OpenBook(val book: LocalBook, val original: Bitmap, val displayed: Bi
 data class StagedPage(val page: LocalPage, val folder: File)
 data class PagePreparation(val message: String, val needsReview: Boolean, val detected: Int = 0, val translated: Int = 0, val rendered: Int = 0, val cleanupFailed: Int = 0, val fitFailed: Int = 0)
 data class ReadingPosition(val pageId: String, val offset: Int)
-data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null, val languageTag: String = "ja")
+data class SavedLine(val id: String, val japanese: String, val source: String, val sampleId: String? = null, val languageTag: String = "ja", val originalText: String = "")
 
 /** Disk operations belong on IO. book.json is the commit point for a chapter import. */
 class LocalBookStore(context: Context, storageDirectory: File = context.filesDir, stagingDirectory: File = File(context.cacheDir, "chapter-imports")) {
@@ -248,12 +248,12 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
     @Synchronized fun savedLines(): List<SavedLine> {
         if (!savedFile.exists()) return emptyList()
         val list = JSONArray(read(savedFile))
-        return (0 until list.length()).map { i -> list.getJSONObject(i).let { SavedLine(it.getString("id"), it.getString("japanese"), it.getString("source"), it.optString("sampleId").takeIf(String::isNotBlank), it.optString("language", "ja")) } }
+        return (0 until list.length()).map { i -> list.getJSONObject(i).let { SavedLine(it.getString("id"), it.getString("japanese"), it.getString("source"), it.optString("sampleId").takeIf(String::isNotBlank), it.optString("language", "ja"), it.optString("originalText")) } }
     }
     @Synchronized fun toggleSaved(line: SavedLine): List<SavedLine> {
         val lines = savedLines()
         val next = if (lines.any { it.id == line.id }) lines.filterNot { it.id == line.id } else listOf(line) + lines
-        write(savedFile, JSONArray().apply { next.forEach { put(JSONObject().put("id", it.id).put("japanese", it.japanese).put("source", it.source).put("sampleId", it.sampleId.orEmpty()).put("language", it.languageTag)) } }.toString())
+        write(savedFile, JSONArray().apply { next.forEach { put(JSONObject().put("id", it.id).put("japanese", it.japanese).put("source", it.source).put("sampleId", it.sampleId.orEmpty()).put("language", it.languageTag).put("originalText", it.originalText)) } }.toString())
         return next
     }
 
@@ -302,7 +302,10 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
                 languageTag = obj.optString("language", "ja"), fontFamily = obj.optString("fontFamily", "sans-serif"),
                 bold = obj.optBoolean("bold"), italic = obj.optBoolean("italic"),
                 sourceLetterHeight = obj.optDouble("sourceLetterHeight", Double.NaN).toFloat().takeIf { it.isFinite() && it > 0f },
-                matchSourceSize = obj.optBoolean("matchSourceSize"), cleanupVersion = obj.optInt("cleanupVersion"), cleanupLocked = obj.optBoolean("cleanupLocked"))
+                matchSourceSize = obj.optBoolean("matchSourceSize"), cleanupVersion = obj.optInt("cleanupVersion"), cleanupLocked = obj.optBoolean("cleanupLocked"),
+                letteringStyle = com.ruyo.reader.LetteringStyle.fromId(obj.optString("letteringStyle")),
+                fillOpacity = obj.optDouble("fillOpacity", .4).toFloat().let { if (it.isFinite()) it.coerceIn(0f, 1f) else .4f },
+                sourceText = obj.optString("sourceText").take(512))
         }
     }
     private fun writeEdits(dir: File, edits: List<BubbleEdit>) = write(File(dir, "edits.json"), JSONArray().apply {
@@ -310,6 +313,7 @@ class LocalBookStore(context: Context, storageDirectory: File = context.filesDir
             .put("language", edit.languageTag).put("fontFamily", edit.fontFamily).put("bold", edit.bold).put("italic", edit.italic)
             .put("sourceLetterHeight", edit.sourceLetterHeight?.toDouble()).put("matchSourceSize", edit.matchSourceSize)
             .put("cleanupVersion", edit.cleanupVersion).put("cleanupLocked", edit.cleanupLocked)
+            .put("letteringStyle", edit.letteringStyle.name).put("fillOpacity", edit.fillOpacity).put("sourceText", edit.sourceText)
             .put("left", edit.region.left).put("top", edit.region.top).put("width", edit.region.width).put("height", edit.region.height)
             .put("inpaint", edit.region.inpaint).put("textColor", edit.region.textColor).put("surface", edit.region.backgroundSurface?.let { s -> JSONObject()
                 .put("left", s.left).put("top", s.top).put("width", s.width).put("height", s.height).put("corners", JSONArray(s.corners)).put("rows", JSONArray(s.rows)).put("coefficients",JSONArray(s.coefficients)) })

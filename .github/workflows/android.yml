@@ -32,9 +32,11 @@ jobs:
         with:
           packages: ''
       - name: Install Android SDK packages
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Fetch and verify offline text detector
         run: python3 scripts/fetch-ocr-model.py
+      - name: Test native artwork repair
+        run: bash scripts/test-native.sh
       - name: Test website image discovery
         run: node scripts/test-web-discovery.mjs
       - name: Test, lint, and assemble
@@ -130,7 +132,7 @@ jobs:
           sudo rm -rf -- /usr/share/dotnet /opt/ghc /usr/local/lib/android/sdk/ndk /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Install compile SDK
-        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0'
+        run: sdkmanager 'platforms;android-36' 'build-tools;35.0.0' 'ndk;27.2.12479018' 'cmake;3.22.1'
       - name: Enable emulator acceleration
         run: |
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules

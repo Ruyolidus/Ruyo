@@ -35,8 +35,12 @@ class BubbleFitter {
         textColor: Int = Color.rgb(39, 42, 53),
         languageTag: String = "ja",
         typeface: Typeface = Typeface.create("sans-serif", Typeface.NORMAL),
+        letteringStyle: LetteringStyle = LetteringStyle.SOLID,
+        fillOpacity: Float = .4f,
+        contrastOutline: Boolean = false,
     ): FitResult {
         require(preferredSize.isFinite() && minimumSize.isFinite())
+        require(fillOpacity.isFinite() && fillOpacity in 0f..1f)
         require(minimumSize > 0f && preferredSize >= minimumSize)
         val text = input.replace("\r\n", " ").replace('\n', ' ').replace('\r', ' ')
         if (text.isBlank() || text.length > 512) return FitResult.Rejected("Text is empty or exceeds this preview's layout limit.")
@@ -69,6 +73,7 @@ class BubbleFitter {
             val budget = LayoutBudget(8_000 / (steps + 1))
             val size = if (steps == 0) preferredSize else maxOf(minimumSize, preferredSize - (preferredSize - minimumSize) * step / steps)
             paint.textSize = size
+            val stroke = (size * .035f).coerceIn(.65f, 2.5f)
             val metrics = paint.fontMetrics
             val lineHeight = ceil(metrics.bottom - metrics.top + size * 0.08f + if (size < 12f) 1f else 4f).toInt()
             val maxLines = minOf(32, safeRegion.height / lineHeight, graphemes.lastIndex)
@@ -107,7 +112,26 @@ class BubbleFitter {
                         val layout = layouts[index]
                         canvas.save()
                         canvas.translate(line.x - layout.getLineLeft(0), line.baseline - layout.getLineBaseline(0))
-                        layout.draw(canvas)
+                        paint.strokeJoin = Paint.Join.ROUND
+                        paint.style = Paint.Style.STROKE
+                        paint.strokeWidth = stroke
+                        paint.alpha = 255
+                        if (letteringStyle == LetteringStyle.OUTLINE) {
+                            paint.color = textColor
+                            layout.draw(canvas)
+                        } else {
+                            if (contrastOutline || letteringStyle == LetteringStyle.TRANSLUCENT) {
+                                val light = Color.red(textColor) + Color.green(textColor) + Color.blue(textColor) > 384
+                                paint.color = if (light) Color.BLACK else Color.WHITE
+                                paint.strokeWidth = stroke * 2
+                                layout.draw(canvas)
+                            }
+                            paint.style = Paint.Style.FILL
+                            paint.color = textColor
+                            paint.alpha = if (letteringStyle == LetteringStyle.TRANSLUCENT) (fillOpacity * 255).toInt() else 255
+                            layout.draw(canvas)
+                        }
+                        paint.style = Paint.Style.FILL; paint.color = textColor; paint.alpha = 255
                         canvas.restore()
                     }
                     // No clip has been used: this inspects actual antialiased glyph pixels.

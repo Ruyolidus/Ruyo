@@ -42,7 +42,10 @@ internal fun WebReaderScreen(model: RuyoModel) {
     }
     DisposableEffect(session.id) { onDispose { model.pauseScrolling() } }
     Box(Modifier.fillMaxSize().background(Color(0xFF25282B)).testTag("web-reader")) {
-        LazyColumn(Modifier.fillMaxSize().background(Color(0xFF25282B)).testTag("web-reading-scroll"), state = scroll) {
+        Column(Modifier.fillMaxSize()) {
+        ReaderControls(model.japanese, { model.japanese = it }, "${(scroll.firstVisibleItemIndex + 1).coerceAtMost(session.images.size)} / ${session.images.size}", "Translated")
+        if (model.selecting) Text("Tap the text you want to edit.", Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primaryContainer).padding(12.dp))
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("web-reading-scroll"), state = scroll) {
             itemsIndexed(session.images, key = { _, image -> image.url }) { index, image ->
                 var retry by remember(image.url) { mutableIntStateOf(0) }
                 val loaded by produceState<Result<OpenBook>?>(null, session.id, index, model.pageRevision, retry) {
@@ -62,17 +65,19 @@ internal fun WebReaderScreen(model: RuyoModel) {
                 } else ReaderPage(if (model.japanese) page.displayed else page.original, "Web image " + (index + 1), "web-page-" + index) { x, y ->
                     if (!model.busy) {
                         val translated = if (model.japanese) page.edits.findLast { it.region.contains(x, y) } else null
-                        if (translated != null) model.studyEdit(translated, page, index)
-                        else model.editWebBubble(index, x, y)
+                        if (model.selecting) model.editWebBubble(index, x, y)
+                        else if (translated != null) model.studyEdit(translated, page, index)
+                        else model.readerImmersive = !model.readerImmersive
                     }
                 }
             }
             item {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp).padding(bottom = 64.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 24.dp).navigationBarsPadding(), horizontalAlignment = Alignment.CenterHorizontally) {
                     Text(if (session.images.isEmpty()) "Waiting for chapter images…" else model.webLoadStatus, color = Color.White, style = MaterialTheme.typography.bodySmall)
                     TextButton(onClick = model::returnToWebsite) { Text("Website", color = Color.White) }
                 }
             }
+        }
         }
         ReaderOverlay(model, ((scroll.firstVisibleItemIndex + 1).coerceAtMost(session.images.size)).toString() + " / " + session.images.size,
             Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(12.dp))
@@ -90,22 +95,7 @@ internal fun WebReaderScreen(model: RuyoModel) {
 internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier = Modifier) {
     if (model.route == "book") { ChapterReaderTools(model, modifier); return }
     val translation = model.scrollTranslation ?: return
-    var settings by rememberSaveable { mutableStateOf(false) }
-    Surface(modifier, shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
-        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), tonalElevation = 2.dp) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (!model.readerImmersive) {
-                if (translation.running && translation.status != null) CircularProgressIndicator(Modifier.padding(start = 12.dp).size(14.dp), strokeWidth = 2.dp)
-                TextButton(onClick = { if (translation.running) model.pauseScrolling() else model.startScrolling() }, enabled = !model.busy,
-                    modifier = Modifier.testTag("scroll-translate")) {
-                    Text(if (translation.running) "Pause" else if (translation.error != null) "Retry" else "Translate")
-                }
-            }
-            IconButton(onClick = { settings = true }, modifier = Modifier.testTag("reading-translation-settings")) {
-                Icon(AppIcons.Settings, "Reading controls", Modifier.size(21.dp), tint = if (translation.error == null) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.error)
-            }
-        }
-    }
+    var settings by model::readerSettingsOpen
     if (settings) ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().navigationBarsPadding(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             item {
@@ -116,11 +106,11 @@ internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier 
             }
             item {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Minimal reader", Modifier.weight(1f))
+                    Text("Hide title bar", Modifier.weight(1f))
                     Switch(checked = model.readerImmersive, onCheckedChange = { model.readerImmersive = it }, modifier = Modifier.testTag("minimal-reader"))
                 }
                 ReaderControls(model.japanese, { model.japanese = it }, "", "Translated")
-                Button(onClick = { if (translation.running) model.pauseScrolling() else model.startScrolling(); settings = false }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { if (translation.running) model.pauseScrolling() else model.startScrolling(); settings = false }, modifier = Modifier.fillMaxWidth().testTag("scroll-translate")) {
                     Text(if (translation.running) "Pause translation" else "Translate as you scroll")
                 }
             }
@@ -138,7 +128,7 @@ internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier 
             item {
                 Text("Only recognised dialogue text is sent to your provider. Comic images stay on this device. Nearby bubbles are translated in small groups; saved swaps are reused.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text("Pinch to zoom. Tap translated dialogue to study. Edit from its lesson sheet; tap untranslated web dialogue to translate it.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
+                Text("Pinch to zoom. Tap translated dialogue to study. Edit from its lesson sheet; choose Edit text from the reader menu to make a correction.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall)
             }
             item {
                 if (model.route == "webread") OutlinedButton(onClick = { settings = false; model.returnToWebsite() }, modifier = Modifier.fillMaxWidth()) { Text("Return to website") }
@@ -152,10 +142,7 @@ internal fun ReaderOverlay(model: RuyoModel, detail: String, modifier: Modifier 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChapterReaderTools(model: RuyoModel, modifier: Modifier) {
-    var settings by rememberSaveable { mutableStateOf(false) }
-    Surface(modifier, shape = androidx.compose.foundation.shape.CircleShape, color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
-        IconButton(onClick = { settings = true }, modifier = Modifier.testTag("reading-translation-settings")) { Icon(AppIcons.Settings, "Reading controls", Modifier.size(21.dp)) }
-    }
+    var settings by model::readerSettingsOpen
     if (settings) ModalBottomSheet(onDismissRequest = { settings = false }, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("Reading controls", style = MaterialTheme.typography.titleLarge)

@@ -9,17 +9,18 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.ruyo.reader.BubbleEdit
 import com.ruyo.reader.LetteringFont
+import com.ruyo.reader.LetteringStyle
 import com.ruyo.reader.TextLanguages
 
 @Composable
-internal fun LanguagePicker(language: String, onChange: (String) -> Unit, enabled: Boolean = true, tag: String = "edit-language") {
+internal fun LanguagePicker(language: String, onChange: (String) -> Unit, enabled: Boolean = true, tag: String = "edit-language", label: String = "Target language") {
     var expanded by remember { mutableStateOf(false) }
     var custom by remember { mutableStateOf(false) }
     var code by remember { mutableStateOf(language) }
     var error by remember { mutableStateOf<String?>(null) }
     Box(Modifier.fillMaxWidth()) {
         OutlinedButton(onClick = { expanded = true }, enabled = enabled, modifier = Modifier.fillMaxWidth().testTag(tag)) {
-            Text("Target language", Modifier.weight(1f))
+            Text(label, Modifier.weight(1f))
             Text(TextLanguages.label(language), color = MaterialTheme.colorScheme.onSurface)
         }
         DropdownMenu(expanded, onDismissRequest = { expanded = false }, modifier = Modifier.heightIn(max = 360.dp)) {
@@ -55,6 +56,19 @@ internal fun LetteringControls(edit: BubbleEdit, model: RuyoModel) {
             }
         }
     }
+    Text("Lettering", style = MaterialTheme.typography.labelLarge)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        LetteringStyle.entries.forEach { style ->
+            FilterChip(edit.letteringStyle == style, { model.changeLetteringStyle(style) }, label = { Text(style.label) },
+                enabled = !model.busy, modifier = Modifier.testTag("lettering-style-${style.name}"))
+        }
+    }
+    if (edit.letteringStyle == LetteringStyle.TRANSLUCENT) {
+        Text("Fill opacity · ${(edit.fillOpacity * 100).toInt()}%", style = MaterialTheme.typography.bodySmall)
+        Slider(edit.fillOpacity, model::changeFillOpacity, enabled = !model.busy, modifier = Modifier.testTag("lettering-opacity"))
+    }
+    if (edit.letteringStyle == LetteringStyle.OUTLINE) Text("Hollow letters show the repaired artwork through their centers. Use a larger size for clear reading.",
+        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         FilterChip(edit.bold, { model.changeBold(!edit.bold) }, label = { Text("Bold") }, enabled = !model.busy, modifier = Modifier.testTag("font-bold"))
         FilterChip(edit.italic, { model.changeItalic(!edit.italic) }, label = { Text("Italic") }, enabled = !model.busy, modifier = Modifier.testTag("font-italic"))

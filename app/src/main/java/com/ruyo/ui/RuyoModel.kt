@@ -175,6 +175,14 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     private var lessonOperation: Job? = null
     private var lessonGeneration = 0L
     private val lessonCache = LessonCache(application)
+    var learnerLevel by mutableStateOf(LearnerLevel.fromId(prefs.getString("learnerLevel", "BEGINNER") ?: "BEGINNER")); private set
+    var explanationLanguage by mutableStateOf(prefs.getString("explanationLanguage", "en") ?: "en"); private set
+    var practiceBusy by mutableStateOf(false); private set
+    var practiceError by mutableStateOf<String?>(null); private set
+    private fun lessonPreferences(line: SavedLine) = LessonPreferences(learnerLevel, explanationLanguage, line.originalText)
+    fun changeLearnerLevel(level: LearnerLevel) { learnerLevel = level; prefs.edit().putString("learnerLevel", level.name).apply(); resetLessonPreferences() }
+    fun changeExplanationLanguage(language: String) { explanationLanguage = TextLanguages.normalize(language); prefs.edit().putString("explanationLanguage", explanationLanguage).apply(); resetLessonPreferences() }
+    private fun resetLessonPreferences() { cancelExplanation(); explanation = null; explanationError = null; practiceError = null; if (lesson != null) explainLesson() }
     var busy by mutableStateOf(false); private set
     var ready by mutableStateOf(false); private set
     var message by mutableStateOf<String?>(null)
@@ -184,6 +192,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     var webHostActive by mutableStateOf(false); private set
     var foreground by mutableStateOf(true); private set
     var readerImmersive by mutableStateOf(false)
+    var readerSettingsOpen by mutableStateOf(false)
     var webLoadStatus by mutableStateOf("Watching for more chapter images…"); private set
     var webVisible by mutableStateOf<List<Int>>(emptyList()); private set
     var webFraction by mutableStateOf(0f); private set
@@ -504,7 +513,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
             languageTag = targetLanguage, sourceLetterHeight = sourceHeight, matchSourceSize = sourceHeight != null)
         val crop = Bitmap.createBitmap(book.original, region.left, region.top, region.width, region.height)
         opened = book
-        draft = EditorDraft(edit, crop, region.eraseMask.copyOf(), existing != null)
+        draft = EditorDraft(edit, crop, region.eraseMask.copyOf(), existing != null, sourceText = edit.sourceText)
         selecting = false; route = "editor"
         automaticEditorId = edit.id
     }
@@ -557,6 +566,8 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     fun changeText(value: String) { cancelAi(); draft = draft?.let { it.copy(edit = it.edit.copy(japanese = value.take(512)), preview = null, previewError = null, revision = it.revision + 1) } }
     fun changeEditLanguage(value: String) { updateLettering { it.copy(languageTag = TextLanguages.normalize(value)) } }
     fun changeFont(value: String) { updateLettering { it.copy(fontFamily = LetteringFont.fromId(value).family) } }
+    fun changeLetteringStyle(value: LetteringStyle) { updateLettering { it.copy(letteringStyle = value) } }
+    fun changeFillOpacity(value: Float) { updateLettering { it.copy(fillOpacity = value.coerceIn(0f, 1f)) } }
     fun changeBold(value: Boolean) { updateLettering { it.copy(bold = value) } }
     fun changeItalic(value: Boolean) { updateLettering { it.copy(italic = value) } }
     fun changeMatchSource(value: Boolean) { updateLettering { it.copy(matchSourceSize = value && it.sourceLetterHeight != null) } }
@@ -606,7 +617,7 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         val current = draft ?: return@task
         if (current.preview == null) return@task
         val book = opened ?: return@task
-        withContext(Dispatchers.IO) { editorStore.saveEdit(book.book.id, book.original, current.edit.copy(cleanupLocked = true, cleanupVersion = TextRegionRepair.VERSION), book.page.id) }
+        withContext(Dispatchers.IO) { editorStore.saveEdit(book.book.id, book.original, current.edit.copy(cleanupLocked = true, cleanupVersion = TextRegionRepair.VERSION, sourceText = current.sourceText.ifBlank { current.edit.sourceText }), book.page.id) }
         finishEditor("Bubble saved")
     }
     fun removeEdit() = task {
@@ -636,10 +647,10 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun closeLesson() {
         cancelExplanation(); lesson = null; explanation = null; explanationError = null
-        lessonEdit = null; lessonEditable = false
+        lessonEdit = null; lessonEditable = false; practiceError = null
     }
     fun studyEdit(edit: BubbleEdit, page: OpenBook? = opened, webIndex: Int? = null) {
-        showLesson(SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter", languageTag = edit.languageTag))
+        showLesson(SavedLine("${page?.book?.id}:${page?.page?.id}:${edit.id}:${edit.japanese.hashCode()}", edit.japanese, page?.book?.title ?: "Imported chapter", languageTag = edit.languageTag, originalText = edit.sourceText))
         if (page != null) {
             val sessionId = webReading?.id
             val imageUrl = webIndex?.let { webReading?.images?.getOrNull(it)?.url }
@@ -661,11 +672,13 @@ class RuyoModel @JvmOverloads constructor(application: Application,
     }
     fun editLesson() { val action = lessonEdit ?: return; closeLesson(); action() }
     fun cancelExplanation() {
-        lessonGeneration++; lessonOperation?.cancel(); lessonOperation = null; explanationBusy = false
+        lessonGeneration++; lessonOperation?.cancel(); lessonOperation = null; explanationBusy = false; practiceBusy = false
     }
-    fun explainLesson() {
+    fun explainLesson() = loadLesson(false)
+    fun retryLesson() = loadLesson(true)
+    private fun loadLesson(force: Boolean) {
         val line = lesson ?: return
-        if (line.sampleId != null || explanationBusy || explanation != null) return
+        if (line.sampleId != null || explanationBusy || practiceBusy || !force && explanation != null) return
         cancelExplanation(); explanationError = null
         val profile = activeProfile
         if (profile == null) { explanationError = "Choose an AI provider to explain this dialogue."; return }
@@ -673,22 +686,55 @@ class RuyoModel @JvmOverloads constructor(application: Application,
         explanationBusy = true
         lessonOperation = viewModelScope.launch {
             try {
-                val key = lessonCache.key(line.japanese, line.languageTag, profile)
-                val cached = withContext(Dispatchers.IO) { lessonCache.read(key) }
+                val preferences = lessonPreferences(line)
+                val key = lessonCache.key(line.japanese, line.languageTag, profile, preferences)
+                val cached = if (force) null else withContext(Dispatchers.IO) { lessonCache.read(key) }
                 val value = cached ?: run {
                     val secret = withContext(Dispatchers.IO) { profileStore.get(profile.id) }
-                    explanationService.explain(secret, line.japanese, line.languageTag)
+                    explanationService.explain(secret, line.japanese, line.languageTag, preferences)
                 }
                 ensureActive()
                 if (generation != lessonGeneration || lesson != line || activeProfileId != profile.id) return@launch
-                explanation = value
-                if (cached == null) withContext(Dispatchers.IO) { runCatching { lessonCache.write(key, value) } }
+                val old = explanation
+                val merged = if (old == null) value else value.copy(
+                    reading = value.reading.ifBlank { old.reading }, chunks = value.chunks.ifEmpty { old.chunks },
+                    grammar = value.grammar.ifEmpty { old.grammar }, vocabulary = value.vocabulary.ifEmpty { old.vocabulary },
+                    examples = value.examples.ifEmpty { old.examples }, exercises = value.exercises.ifEmpty { old.exercises })
+                explanation = merged
+                if (cached == null) withContext(Dispatchers.IO) { runCatching { lessonCache.write(key, merged) } }
             } catch (_: TimeoutCancellationException) {
                 if (generation == lessonGeneration) explanationError = "The provider took too long. Retry or choose a faster model."
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 if (generation == lessonGeneration) explanationError = (error as? TranslationFailure)?.message ?: "Could not prepare this lesson. Check your provider and try again."
             } finally { if (generation == lessonGeneration) { explanationBusy = false; lessonOperation = null } }
+        }
+    }
+    fun loadPractice() {
+        val line = lesson ?: return
+        val current = explanation ?: return
+        val profile = activeProfile ?: return
+        if (practiceBusy || explanationBusy) return
+        cancelExplanation(); practiceError = null; practiceBusy = true
+        val generation = lessonGeneration
+        val preferences = lessonPreferences(line)
+        lessonOperation = viewModelScope.launch {
+            try {
+                val secret = withContext(Dispatchers.IO) { profileStore.get(profile.id) }
+                val result = explanationService.practice(secret, line.japanese, line.languageTag, preferences)
+                ensureActive()
+                if (generation != lessonGeneration || lesson != line || activeProfileId != profile.id) return@launch
+                val value = current.copy(examples = result.examples.ifEmpty { current.examples }, exercises = result.exercises.ifEmpty { current.exercises })
+                explanation = value
+                if (value.examples.isEmpty() || value.exercises.isEmpty()) practiceError = "Part of the practice was missing. The usable parts are shown below."
+                val key = lessonCache.key(line.japanese, line.languageTag, profile, preferences)
+                withContext(Dispatchers.IO) { runCatching { lessonCache.write(key, value) } }
+            } catch (_: TimeoutCancellationException) {
+                if (generation == lessonGeneration) practiceError = "Practice timed out. Your explanation is still available."
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) {
+                if (generation == lessonGeneration) practiceError = (error as? TranslationFailure)?.message ?: "Practice could not load. Your explanation is still available."
+            } finally { if (generation == lessonGeneration) { practiceBusy = false; lessonOperation = null } }
         }
     }
     fun toggleSaved(line: SavedLine) = task { saved = withContext(Dispatchers.IO) { store.toggleSaved(line) } }

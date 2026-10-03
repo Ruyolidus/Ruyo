@@ -30,6 +30,11 @@ data class BubbleRegion(
     }
 }
 
+enum class LetteringStyle(val label: String) {
+    SOLID("Filled"), OUTLINE("Hollow"), TRANSLUCENT("Soft fill");
+    companion object { fun fromId(id: String) = entries.firstOrNull { it.name == id } ?: SOLID }
+}
+
 data class BubbleEdit(
     val id: String = UUID.randomUUID().toString(),
     val region: BubbleRegion,
@@ -44,6 +49,9 @@ data class BubbleEdit(
     val matchSourceSize: Boolean = false,
     val cleanupVersion: Int = 0,
     val cleanupLocked: Boolean = false,
+    val letteringStyle: LetteringStyle = LetteringStyle.SOLID,
+    val fillOpacity: Float = 0.4f,
+    val sourceText: String = "",
 )
 
 sealed interface SelectionResult {
@@ -208,7 +216,7 @@ object BubbleEditRenderer {
         else preferredSize(pageWidth, edit.fontScale)
     }
 
-    fun preview(source: Bitmap, edit: BubbleEdit): Result<BubblePreview> = runCatching {
+    fun preview(source: Bitmap, edit: BubbleEdit, otherRegions: List<BubbleRegion> = emptyList()): Result<BubblePreview> = runCatching {
         val region = edit.region
         require(!region.inpaint || region.eraseMask.any { it }) { "Brush over the original letters, or use Rebuild cleanup, before previewing this area." }
         require(region.left >= 0 && region.top >= 0 && region.left + region.width <= source.width && region.top + region.height <= source.height) { "The bubble is outside the image." }
@@ -217,22 +225,21 @@ object BubbleEditRenderer {
         val preferred = preferredSize(source.width, edit)
         val minimum = min(preferred, 6f)
         val result = BubbleFitter().fit(LetteringText.normalize(edit.japanese), safe, preferred, minimum,
-            textColor = region.textColor, languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic))
+            textColor = region.textColor, languageTag = edit.languageTag, typeface = LetteringFont.fromId(edit.fontFamily).typeface(edit.bold, edit.italic),
+            letteringStyle = edit.letteringStyle, fillOpacity = edit.fillOpacity, contrastOutline = region.inpaint)
         require(result is FitResult.Accepted) { (result as FitResult.Rejected).reason }
-        val pixels = cleanedPixels(source, region)
+        val pixels = cleanedPixels(source, region, otherRegions)
         val crop = Bitmap.createBitmap(region.width, region.height, Bitmap.Config.ARGB_8888)
         crop.setPixels(pixels, 0, region.width, 0, 0, region.width, region.height)
         Canvas(crop).drawBitmap(result.ink, 0f, 0f, null)
         BubblePreview(crop, result)
     }
 
-    internal fun cleanedPixels(source: Bitmap, region: BubbleRegion): IntArray {
+    internal fun cleanedPixels(source: Bitmap, region: BubbleRegion, otherRegions: List<BubbleRegion> = emptyList()): IntArray {
+        if (region.inpaint) return ArtworkBackgrounds.clean(source, region, otherRegions)
         val pixels = IntArray(region.width * region.height)
         source.getPixels(pixels, 0, region.width, region.left, region.top, region.width, region.height)
-        if (region.inpaint) {
-            val mask = BooleanArray(pixels.size) { region.eraseMask[it] && region.interior[it % region.width, it / region.width] }
-            LocalInpainter.repair(pixels, region.width, region.height, mask).copyInto(pixels)
-        } else for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] =
+        for (i in pixels.indices) if (region.eraseMask[i] && region.interior[i % region.width, i / region.width]) pixels[i] =
             region.backgroundSurface?.colorAt(region.left + i % region.width, region.top + i / region.width) ?: region.backgroundColor
         return pixels
     }
@@ -241,7 +248,7 @@ object BubbleEditRenderer {
         val bitmap = source.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(bitmap)
         for (edit in edits) {
-            val preview = preview(source, edit).getOrThrow()
+            val preview = preview(source, edit, edits.map { it.region }).getOrThrow()
             // Transparent outside the explicit repair/ink footprint, so overlapping
             // bounding rectangles cannot erase a previously composed bubble.
             val pixels = IntArray(edit.region.width * edit.region.height)

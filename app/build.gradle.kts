@@ -9,6 +9,8 @@ plugins {
 android {
     namespace = "com.ruyo"
     compileSdk = 36
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
 
     defaultConfig {
         applicationId = "com.ruyo"
@@ -16,7 +18,7 @@ android {
         targetSdk = 36
         versionCode = providers.environmentVariable("GITHUB_RUN_NUMBER")
             .orNull?.toIntOrNull() ?: 1
-        versionName = "0.6.2"
+        versionName = "0.7.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -41,6 +43,7 @@ android {
             it.testLogging { events("failed"); exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL }
             it.maxHeapSize = "2g"
             it.systemProperty("roborazzi.test.record", "true")
+            it.systemProperty("ruyo.nativeLibrary", layout.buildDirectory.file("native-host/libruyo_repair.so").get().asFile.path)
             it.systemProperty("ruyo.fixtureDir", file("src/androidTest/assets/regressions").absolutePath)
             it.systemProperty("ruyo.previewDir", layout.buildDirectory.dir("test-previews").get().asFile.path)
         }
@@ -80,3 +83,12 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.10.2")
     testImplementation("org.robolectric:robolectric:4.16")
 }
+
+// Robolectric exercises the same C++ implementation as Android, never a mock repair.
+val nativeHost by tasks.registering(Exec::class) {
+    workingDir(rootDir)
+    commandLine("bash", "scripts/build-native-host.sh")
+    inputs.files(fileTree("src/main/cpp"), rootProject.file("scripts/build-native-host.sh"))
+    outputs.file(layout.buildDirectory.file("native-host/libruyo_repair.so"))
+}
+tasks.withType<Test>().configureEach { dependsOn(nativeHost) }

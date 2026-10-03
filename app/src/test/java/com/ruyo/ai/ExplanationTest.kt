@@ -13,7 +13,7 @@ import org.robolectric.annotation.Config
 class ExplanationTest {
     private fun lesson() = AiLesson("Wait, please.", "matte", listOf(LessonPoint("待って", "A casual request.")),
         listOf(LessonWord("待つ", "まつ", "to wait", "N5")), listOf(LessonExample("少し待って。", "すこしまって。", "Sukoshi matte.", "Wait a little. The te-form asks someone to wait.", listOf(LessonWord("少し", "すこし", "a little", "N5"), LessonWord("待って", "まって", "wait, as a casual request", "N5")))),
-        listOf(LessonExercise("Give the dictionary form.", "待つ", "This verb uses the te-form.", "The dialogue says wait, as a request.", "まつ / matsu")))
+        listOf(LessonExercise("Give the dictionary form.", "待つ", "This verb uses the te-form.", "The dialogue says wait, as a request.", "まつ / matsu")), chunks = listOf(LessonWord("待って", "まって", "wait", "N5")))
     private fun profile(kind: ProviderKind = ProviderKind.OPENAI) = ProviderProfile(name = "Fixture", kind = kind, baseUrl = kind.endpoint, model = "test-model")
     @Test fun requestsUseEachNativeProtocolAndOnlyDialogueText() {
         ProviderKind.entries.forEach { kind ->
@@ -38,23 +38,48 @@ class ExplanationTest {
         assertNotEquals(key, cache.key("待って！", "ja", profile.copy(model = "different")))
         assertEquals(key, cache.key("待って！", "ja", profile.copy(name = "Renamed")))
     }
-    @Test fun malformedIncompleteAndOversizedLessonsAreRejected() {
-        assertEquals(lesson(), ExplanationClient.decode(ExplanationClient.encode(lesson())))
+    @Test fun missingOptionalPartsKeepUsableMeaningAndReading() {
         val mutations: List<(JSONObject) -> Unit> = listOf(
             { it.remove("grammar") },
-            { it.put("meaning", 42) },
-            { it.put("meaning", "a".repeat(1201)) },
-            { it.getJSONArray("vocabulary").getJSONObject(0).put("level", "definitely N0") },
             { it.getJSONArray("examples").getJSONObject(0).remove("reading") },
             { it.getJSONArray("examples").getJSONObject(0).put("reading", "少し待って") },
             { it.getJSONArray("examples").getJSONObject(0).getJSONArray("words").remove(0) },
-            { it.getJSONArray("examples").getJSONObject(0).getJSONArray("words").getJSONObject(0).put("reading", "") },
-            { it.getJSONArray("exercises").getJSONObject(0).remove("hint") },
-            { it.put("exercises", org.json.JSONArray()) })
+            { it.getJSONArray("exercises").getJSONObject(0).remove("hint") })
         mutations.forEach { mutate ->
             val body = ExplanationClient.encode(lesson()); mutate(body)
-            assertTrue(runCatching { ExplanationClient.decode(body) }.isFailure)
+            val decoded = ExplanationClient.decode(body)
+            assertEquals(lesson().meaning, decoded.meaning)
+            assertEquals(lesson().reading, decoded.reading)
+            assertTrue(decoded.missingSections.isNotEmpty())
         }
+    }
+    @Test fun invalidMeaningStillFailsAndInvalidVocabularyLevelIsOmitted() {
+        for (bad in listOf<Any>(42, "a".repeat(1201))) assertTrue(runCatching { ExplanationClient.decode(ExplanationClient.encode(lesson()).put("meaning", bad)) }.isFailure)
+        val body = ExplanationClient.encode(lesson())
+        body.getJSONArray("vocabulary").getJSONObject(0).put("level", "N0")
+        assertEquals("", ExplanationClient.decode(body).vocabulary.first().level)
+    }
+    @Test fun truncatedResponseRetainsOnlyWholeFieldsAndNeverInventsTheRest() {
+        val content = """{"meaning":"Wait, please.","reading":"まって","note":"An escaped \"word\" and {brace}","grammar":[{"text":"待って""""
+        val response = JSONObject().put("choices", org.json.JSONArray().put(JSONObject().put("finish_reason", "length").put("message", JSONObject().put("content", content)))).toString()
+        val decoded = ExplanationClient.decode(TranslationClient.objectContent(ProviderKind.OPENAI, response, allowPartial = true))
+        assertEquals("Wait, please.", decoded.meaning); assertEquals("まって", decoded.reading)
+        assertTrue(decoded.grammar.isEmpty()); assertTrue(decoded.missingSections.contains("response"))
+        assertTrue(runCatching { TranslationClient.objectContent(ProviderKind.OPENAI, response) }.isFailure)
+    }
+    @Test fun preferencesAndSourceAreTextOnlyAndSeparateTheCache() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val cache = LessonCache(context); val p = profile()
+        val defaults = cache.key("待って", "ja", p)
+        val options = LessonPreferences(LearnerLevel.N4, "fr", "Wait!")
+        assertNotEquals(defaults, cache.key("待って", "ja", p, options))
+        val body = ExplanationClient.request(ProviderSecret(p, "test-key"), "待って", "ja", options).body
+        assertTrue(body.contains("N4")); assertTrue(body.contains("Wait!")); assertTrue(body.contains("explanationLanguage"))
+        assertFalse(body.contains("test-key"))
+        val core = JSONObject(body).getJSONArray("messages").getJSONObject(0).getString("content")
+        assertTrue(core.contains("Do not add exercises"))
+        val practice = ExplanationClient.request(ProviderSecret(p, "test-key"), "待って", "ja", options, practice = true).body
+        assertTrue(practice.contains("EVERY target-language word"))
     }
     @Test fun quickChoicesRoundTripAndRejectAnAmbiguousAnswer() {
         val value = lesson().copy(note = "It's a quick 'hang on!' you can say to a friend.", exercises = listOf(
@@ -62,15 +87,15 @@ class ExplanationTest {
         assertEquals(value, ExplanationClient.decode(ExplanationClient.encode(value)))
         val wrong = ExplanationClient.encode(value)
         wrong.getJSONArray("exercises").getJSONObject(0).put("answer", "not an option")
-        assertTrue(runCatching { ExplanationClient.decode(wrong) }.isFailure)
+        assertTrue(ExplanationClient.decode(wrong).exercises.isEmpty())
         val duplicate = ExplanationClient.encode(value)
         duplicate.getJSONArray("exercises").getJSONObject(0).getJSONArray("choices").put(1, "待って")
-        assertTrue(runCatching { ExplanationClient.decode(duplicate) }.isFailure)
+        assertTrue(ExplanationClient.decode(duplicate).exercises.isEmpty())
     }
     @Test fun oldCachedLessonsCannotHideTheNewExampleReadings() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         val cache = LessonCache(context); val key = cache.key("待って！", "ja", profile())
-        java.io.File(context.cacheDir, "lessons-v3/$key.json").delete()
+        java.io.File(context.cacheDir, "lessons-v4/$key.json").delete()
         val old = java.io.File(context.cacheDir, "lessons-v2/$key.json")
         old.parentFile!!.mkdirs(); old.writeText(ExplanationClient.encode(lesson()).toString())
         assertNull(cache.read(key))

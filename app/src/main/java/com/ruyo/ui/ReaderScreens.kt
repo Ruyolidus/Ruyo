@@ -49,6 +49,7 @@ internal fun SampleReader(model: RuyoModel) {
                 ReaderPage(if (model.japanese) page.translated else page.original, "Panel ${index + 1}", "sample-panel-$index",
                     study = if (model.japanese) ({ model.studySample(page.line.id) }) else null) { x, y ->
                     if (model.japanese && page.interior[x - page.bubbleBounds.left.toInt(), y - page.bubbleBounds.top.toInt()]) model.studySample(page.line.id)
+                    else model.readerImmersive = !model.readerImmersive
                 }
             }
             item { Text("End of sample", Modifier.fillMaxWidth().padding(24.dp), color = Color(0xFFC0C5CA), style = MaterialTheme.typography.bodySmall, textAlign = androidx.compose.ui.text.style.TextAlign.Center) }
@@ -87,7 +88,7 @@ internal fun BookReader(model: RuyoModel) {
                 model.selectionError?.let { Text(it, Modifier.padding(top = 8.dp).testTag("selection-error"), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onPrimaryContainer) }
             }
         }
-        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("chapter-scroll"), state = scroll, contentPadding = PaddingValues(bottom = 68.dp)) {
+        LazyColumn(Modifier.weight(1f).fillMaxWidth().background(Color(0xFF25282B)).testTag("chapter-scroll"), state = scroll, contentPadding = PaddingValues(bottom = 8.dp)) {
             itemsIndexed(book.pages, key = { _, page -> page.id }) { index, page ->
                 var retry by remember(page.id) { mutableIntStateOf(0) }
                 val loaded by produceState<Result<OpenBook>?>(null, book.id, page.id, model.pageRevision, retry) {
@@ -106,7 +107,10 @@ internal fun BookReader(model: RuyoModel) {
                     onArea = if (model.selecting && !model.busy) ({ l, t, r, b -> model.selectTextArea(l, t, r, b, data); Unit }) else null) { x, y ->
                     if (!model.busy) {
                         if (model.selecting) model.selectBubble(x, y, data)
-                        else if (model.japanese) data.edits.findLast { it.region.contains(x, y) }?.let { model.studyEdit(it, data) }
+                        else {
+                            val edit = if (model.japanese) data.edits.findLast { it.region.contains(x, y) } else null
+                            if (edit != null) model.studyEdit(edit, data) else model.readerImmersive = !model.readerImmersive
+                        }
                     }
                 }
             }
@@ -170,12 +174,18 @@ internal fun ReaderPage(bitmap: Bitmap, label: String, tag: String, study: (() -
                     onDrag = { change, _ -> change.consume(); areaEnd = change.position })
             }
         }.pointerInput(bitmap.width, bitmap.height, zoom, pan) {
-            detectTapGestures { tap ->
+            detectTapGestures(onDoubleTap = { tap ->
+                zoom = if (zoom > 1.05f) 1f else 2.5f
+                val center = Offset(size.width / 2f, size.height / 2f)
+                val desired = (center - tap) * (zoom - 1f)
+                pan = Offset(desired.x.coerceIn(-size.width * (zoom - 1) / 2, size.width * (zoom - 1) / 2),
+                    desired.y.coerceIn(-size.height * (zoom - 1) / 2, size.height * (zoom - 1) / 2))
+            }, onTap = { tap ->
                 val center = Offset(size.width / 2f, size.height / 2f)
                 val imagePoint = (tap - center - pan) / zoom + center
                 val scale = size.width.toFloat() / bitmap.width
                 currentTap((imagePoint.x / scale).toInt(), (imagePoint.y / scale).toInt())
-            }
+            })
         }.semantics { if (study != null) onClick("Study Japanese bubble") { study(); true } }) {
         Image(bitmap.asImageBitmap(), label, Modifier.fillMaxSize().graphicsLayer { scaleX = zoom; scaleY = zoom; translationX = pan.x; translationY = pan.y }, contentScale = ContentScale.FillBounds)
         val start = areaStart; val end = areaEnd
@@ -237,14 +247,26 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                 Text(if (model.activeProfile == null) "Choose AI provider" else "Retry explanation")
                             }
                         }
-                        Text("Only this dialogue text is sent. Lessons are cached on this device.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("The selected line and its original text, when available, are sent. Lessons are saved on this device.", Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
-                        item { Text("AI explanation · English", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        item { Text("${com.ruyo.reader.TextLanguages.label(model.explanationLanguage)} · ${model.learnerLevel.label}", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                        if (value.missingSections.isNotEmpty() || model.explanationError != null) item {
+                            Text(model.explanationError ?: "Some reading help is missing. You can use this explanation and retry the missing details.", style = MaterialTheme.typography.bodySmall)
+                            TextButton(onClick = model::retryLesson, enabled = !model.explanationBusy && !model.practiceBusy) { Text(if (model.explanationBusy) "Loading details…" else "Retry details") }
+                        }
                         when (selectedTab) {
                             0 -> {
                                 item {
                                     Text(value.meaning, style = MaterialTheme.typography.titleLarge, modifier = Modifier.testTag("lesson-meaning"))
                                     if (value.note.isNotBlank()) Text(value.note, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.bodyLarge)
+                                    var breakdown by rememberSaveable(line.id) { mutableStateOf(false) }
+                                    if (value.chunks.isNotEmpty()) {
+                                        TextButton(onClick = { breakdown = !breakdown }, modifier = Modifier.testTag("sentence-breakdown")) { Text(if (breakdown) "Hide reading help" else "Read it piece by piece") }
+                                        if (breakdown) value.chunks.forEach { word ->
+                                            Text(word.word + " · " + word.reading, Modifier.padding(top = 8.dp), style = MaterialTheme.typography.titleSmall)
+                                            Text(word.meaning, style = MaterialTheme.typography.bodyMedium)
+                                        }
+                                    }
                                     TextButton(onClick = { selectedTab = 1 }) { Text("How it works") }
                                 }
                                 value.examples.forEachIndexed { index, example ->
@@ -252,11 +274,11 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                         var help by rememberSaveable(line.id, example.text) { mutableStateOf(false) }
                                         SectionLabel("You could also say")
                                         Text(example.text, style = MaterialTheme.typography.titleMedium)
+                                        Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
                                         Text(example.explanation, Modifier.padding(top = 8.dp))
                                         TextButton(onClick = { help = !help }, modifier = Modifier.testTag("example-help-$index")) { Text(if (help) "Hide reading & words" else "Reading & words") }
                                         if (help) {
-                                            Text(example.reading, Modifier.testTag("example-reading-$index"), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                            if (example.pronunciation != example.reading) Text(example.pronunciation, style = MaterialTheme.typography.bodyMedium)
                                             example.words.forEach { word ->
                                                 Text(word.word + " · " + word.reading, Modifier.padding(top = 12.dp), style = MaterialTheme.typography.titleSmall)
                                                 Text(word.meaning)
@@ -276,7 +298,19 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                     if (line.languageTag.startsWith("ja") && word.level.isNotBlank()) Text("Approx. " + word.level, style = MaterialTheme.typography.labelSmall)
                                 } }
                             }
-                            else -> value.exercises.forEachIndexed { index, exercise -> item {
+                            else -> {
+                                item {
+                                    if (model.practiceBusy) Row(verticalAlignment = Alignment.CenterVertically) {
+                                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        Text("Preparing one example and a quick question…", Modifier.padding(start = 12.dp))
+                                    }
+                                    model.practiceError?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                                    if (!model.practiceBusy && (value.exercises.isEmpty() || value.examples.isEmpty() || model.practiceError != null)) {
+                                        Text("A short example and a question using this line. Loads only when you ask.", style = MaterialTheme.typography.bodyMedium)
+                                        Button(onClick = model::loadPractice, enabled = !model.explanationBusy, modifier = Modifier.testTag("load-practice")) { Text(if (model.practiceError == null) "Try it" else "Retry practice") }
+                                    }
+                                }
+                                value.exercises.forEachIndexed { index, exercise -> item {
                                 var revealed by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
                                 var choice by rememberSaveable(line.id, exercise.question) { mutableStateOf<String?>(null) }
                                 var hint by rememberSaveable(line.id, exercise.question) { mutableStateOf(false) }
@@ -293,6 +327,7 @@ internal fun StudySheet(model: RuyoModel, line: SavedLine) {
                                 TextButton(onClick = { revealed = !revealed }) { Text(if (revealed) "Hide answer" else "Show answer") }
                                 if (revealed || choice == exercise.answer) { Text(exercise.answer, style = MaterialTheme.typography.titleMedium); Text(exercise.answerReading); Text(exercise.explanation) }
                             } }
+                            }
                         }
                     }
                 }

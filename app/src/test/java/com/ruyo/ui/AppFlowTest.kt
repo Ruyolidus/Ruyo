@@ -37,7 +37,7 @@ class AppFlowTest {
 
     @Before fun resetState() {
         context.filesDir.listFiles().orEmpty().forEach { it.deleteRecursively() }
-        File(context.cacheDir, "lessons-v3").deleteRecursively()
+        File(context.cacheDir, "lessons-v4").deleteRecursively()
         context.getSharedPreferences("settings", 0).edit().clear().commit()
     }
 
@@ -76,7 +76,8 @@ class AppFlowTest {
         awaitTag("book-${book.id}")
         compose.onNodeWithTag("book-${book.id}").performClick()
         awaitTag("imported-page")
-        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * 0.5f, height * 0.105f)) }
         awaitTag("japanese-input")
         capture("bubble-cleanup")
@@ -117,7 +118,8 @@ class AppFlowTest {
         assertFalse(source.sameAs(reopened.displayed))
         awaitTag("imported-page")
         capture("imported-reader")
-        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * 0.5f, height * 0.105f)) }
         awaitTag("japanese-input")
         assertTrue(model.draft!!.existing)
@@ -157,7 +159,8 @@ class AppFlowTest {
         compose.runOnIdle { model.flushPosition() }
         awaitState { model.store.progress(chapter).pageId == second }
         capture("chapter-reader")
-        compose.onNodeWithContentDescription("Manage chapter pages").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithText("Manage chapter pages").performClick()
         awaitTag("chapter-pages")
         capture("chapter-pages")
         compose.onNodeWithTag("move-up-$second").performScrollTo().performClick()
@@ -236,7 +239,8 @@ class AppFlowTest {
         compose.onNodeWithTag("nav-library").performClick()
         compose.onNodeWithTag("book-" + book.id).performClick()
         awaitTag("imported-page")
-        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * 0.5f, height * 0.105f)) }
         awaitTag("japanese-input")
         assertEquals("fr", model.draft!!.edit.languageTag)
@@ -267,7 +271,8 @@ class AppFlowTest {
         awaitTag("book-${book.id}")
         compose.onNodeWithTag("book-${book.id}").performClick()
         awaitTag("imported-page")
-        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput {
             down(Offset(width * .25f, height * .20f)); advanceEventTime(700)
             moveTo(Offset(width * .75f, height * .60f)); up()
@@ -345,7 +350,8 @@ class AppFlowTest {
         awaitTag("book-sample")
         compose.onNodeWithTag("book-" + book.id).performClick()
         awaitTag("imported-page")
-        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * .5f, height * .105f)) }
         awaitTag("bubble-editor")
         val editId = model.draft!!.edit.id
@@ -391,7 +397,8 @@ class AppFlowTest {
         awaitTag("book-sample")
         compose.onNodeWithTag("book-" + book.id).performClick()
         awaitTag("imported-page")
-        compose.onNodeWithContentDescription("Edit bubbles").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("imported-page").performTouchInput { click(Offset(width * .5f, height * .105f)) }
         awaitTag("bubble-editor")
         awaitState { entered.get() }
@@ -442,6 +449,8 @@ class AppFlowTest {
         assertTrue(LocalBookStore(context).list().isEmpty())
         awaitState { !model.busy }
         capture("web-reader-before-edit")
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reader-edit").performClick()
         compose.onNodeWithTag("web-page-0").performTouchInput { click(Offset(width * .5f, width * .30f)) }
         try { awaitTag("bubble-editor") } catch (error: Throwable) {
             capture("web-reader-tap-failure")
@@ -457,6 +466,9 @@ class AppFlowTest {
         compose.onNodeWithTag("save-edit").performClick()
         awaitTag("web-reader")
         awaitState { !model.busy }
+        compose.runOnIdle { model.selecting = false }
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithTag("reading-translation-settings").performClick()
         compose.onNodeWithTag("scroll-translate").performClick()
         // Two source images intersect this taller reader; the third is prefetched.
         awaitState { model.scrollTranslation?.notes?.keys?.containsAll(listOf(0, 1, 2)) == true }
@@ -468,7 +480,8 @@ class AppFlowTest {
         awaitState { model.webPosition.first == 0 }
         capture("web-reader-translated")
         val normalHeight = compose.onNodeWithTag("web-reader").fetchSemanticsNode().boundsInRoot.height
-        compose.onNodeWithContentDescription("Hide reader toolbar").performClick()
+        compose.onNodeWithTag("reader-menu").performClick()
+        compose.onNodeWithText("Hide title bar").performClick()
         compose.waitForIdle()
         assertTrue(compose.onNodeWithTag("web-reader").fetchSemanticsNode().boundsInRoot.height > normalHeight)
         capture("web-reader-minimal")
@@ -488,7 +501,8 @@ class AppFlowTest {
         awaitTag("study-sheet")
         awaitState { model.explanation != null && !model.explanationBusy }
         assertEquals(1, lessons)
-        compose.onNodeWithTag("example-reading-0").assertDoesNotExist()
+        compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("example-reading-0"))
+        compose.onNodeWithTag("example-reading-0").assertExists()
         capture("ai-lesson-conversation", "study-sheet")
         compose.onNodeWithTag("lesson-content").performScrollToNode(hasTestTag("example-help-0"))
         compose.onNodeWithTag("example-help-0").performClick()

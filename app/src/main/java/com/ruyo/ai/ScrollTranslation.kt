@@ -158,7 +158,7 @@ class PageTranslationPipeline(
                 val sourceHeight = area.lines.map { (it.bottom - it.top).toFloat() }.sorted().let { it[it.size / 2] }
                 val edit = BubbleEdit(region = region, japanese = requireNotNull(cached[key(area)]),
                     margin = maxOf(2, minOf(region.width, region.height) / 14), languageTag = settings.language,
-                    sourceLetterHeight = sourceHeight, matchSourceSize = true, cleanupVersion = TextRegionRepair.VERSION)
+                    sourceLetterHeight = sourceHeight, matchSourceSize = true, cleanupVersion = TextRegionRepair.VERSION, sourceText = area.source.take(512))
                 val fits = withContext(Dispatchers.Default) {
                     BubbleEditRenderer.preview(page.original, edit).fold(onSuccess = { preview ->
                         preview.crop.recycle(); preview.fit.ink.recycle(); true

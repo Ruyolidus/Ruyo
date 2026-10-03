@@ -114,7 +114,24 @@ private fun AppContent(model: RuyoModel) {
                     },
                     back = if (home) null else ({ if (!model.busy) back() }),
                     actions = {
-                        if (reading) IconButton(onClick = { model.readerImmersive = true }) { Icon(AppIcons.Zoom, "Hide reader toolbar") }
+                        if (reading) {
+                            var menu by remember { mutableStateOf(false) }
+                            Box {
+                                IconButton(onClick = { menu = true }, modifier = Modifier.testTag("reader-menu")) { Icon(AppIcons.More, "Reader menu") }
+                                DropdownMenu(menu, onDismissRequest = { menu = false }) {
+                                    if (model.route != "sample") {
+                                        DropdownMenuItem(text = { Text("Reading controls") }, onClick = { menu = false; model.readerSettingsOpen = true }, modifier = Modifier.testTag("reading-translation-settings"))
+                                        DropdownMenuItem(text = { Text(if (model.selecting) "Finish editing" else "Edit text") }, onClick = { menu = false; model.toggleSelection() }, modifier = Modifier.testTag("reader-edit"))
+                                    }
+                                    DropdownMenuItem(text = { Text("Hide title bar") }, onClick = { menu = false; model.readerImmersive = true })
+                                    if (model.route == "book") {
+                                        HorizontalDivider()
+                                        DropdownMenuItem(text = { Text("Manage chapter pages") }, onClick = { menu = false; model.managePages() })
+                                        DropdownMenuItem(text = { Text("Remove chapter") }, onClick = { menu = false; remove = model.chapter })
+                                    }
+                                }
+                            }
+                        }
                         when {
                             home && model.tab == "library" -> {
                                 IconButton(onClick = model::browse, enabled = !model.busy) { Icon(AppIcons.Web, "Browse websites") }
@@ -125,11 +142,6 @@ private fun AppContent(model: RuyoModel) {
                                 IconButton(onClick = { model.webAddressExpanded = !model.webAddressExpanded }, enabled = !model.busy, modifier = Modifier.testTag("toggle-web-address")) {
                                     Icon(if (model.webAddressExpanded) AppIcons.Close else AppIcons.Search, if (model.webAddressExpanded) "Close address bar" else "Enter website address")
                                 }
-                            }
-                            model.route == "book" -> {
-                                IconButton(onClick = model::toggleSelection, enabled = !model.busy) { Icon(if (model.selecting) AppIcons.Close else AppIcons.Edit, if (model.selecting) "Cancel selection" else "Edit bubbles") }
-                                IconButton(onClick = model::managePages, enabled = !model.busy) { Icon(AppIcons.Pages, "Manage chapter pages") }
-                                IconButton(onClick = { remove = model.chapter }, enabled = !model.busy) { Icon(AppIcons.Trash, "Remove chapter") }
                             }
                             model.route == "editor" -> TextButton(onClick = model::saveEdit, enabled = model.draft?.preview != null && !model.busy && model.aiStatus == null, modifier = Modifier.testTag("save-edit")) { Text("Save") }
                         }
@@ -334,6 +346,22 @@ private fun SettingsScreen(model: RuyoModel) {
             SectionLabel("Translation")
             LanguagePicker(model.targetLanguage, model::changeTargetLanguage, !model.busy, tag = "default-language")
             Text("New edits use this language. Existing translations keep theirs.", Modifier.padding(top = 8.dp), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        item {
+            SectionLabel("Learning")
+            var levels by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { levels = true }, modifier = Modifier.fillMaxWidth().testTag("learner-level")) {
+                    Text("Your level", Modifier.weight(1f)); Text(model.learnerLevel.label)
+                }
+                DropdownMenu(levels, onDismissRequest = { levels = false }) {
+                    com.ruyo.ai.LearnerLevel.entries.forEach { level ->
+                        DropdownMenuItem(text = { Text(level.label) }, onClick = { levels = false; model.changeLearnerLevel(level) })
+                    }
+                }
+            }
+            LanguagePicker(model.explanationLanguage, model::changeExplanationLanguage, tag = "explanation-language", label = "Explain in")
+            Text("Lessons stay at the level you choose. Reading help covers every word; practice loads when you ask for it.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             OutlinedButton(onClick = model::editProfiles, enabled = !model.busy, modifier = Modifier.fillMaxWidth().testTag("manage-providers")) { Text("Manage AI providers") }

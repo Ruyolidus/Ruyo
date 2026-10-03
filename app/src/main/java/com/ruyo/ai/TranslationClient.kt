@@ -167,24 +167,30 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
             }
             return ProviderRequest(base + path, headers, body.toString(), profile.requestTimeout)
         }
-        internal fun objectContent(kind: ProviderKind, response: String): JSONObject {
+        internal fun objectContent(kind: ProviderKind, response: String, allowPartial: Boolean = false): JSONObject {
                 val root = JSONObject(response)
+                var truncated = false
+                fun finish(reason: String, complete: String, limit: String) {
+                    truncated = reason == limit
+                    if (truncated && !allowPartial) throw TranslationFailure("The provider reached its output limit. Split the request or choose a model with more output space.")
+                    if (reason != complete && !(truncated && allowPartial)) throw TranslationFailure("The provider stopped without a complete response ($reason). Your saved work is safe.")
+                }
                 val content = when (kind) {
                     ProviderKind.OPENAI, ProviderKind.COMPATIBLE -> {
                         val choice = root.getJSONArray("choices").getJSONObject(0)
-                        require(choice.getString("finish_reason") == "stop")
+                        finish(choice.getString("finish_reason"), "stop", "length")
                         val message = choice.getJSONObject("message")
-                        require(message.isNull("refusal"))
+                        if (!message.isNull("refusal")) throw TranslationFailure("This provider declined to explain the selected text.")
                         message.getString("content")
                     }
                     ProviderKind.CLAUDE -> {
-                        require(root.getString("stop_reason") == "end_turn")
+                        finish(root.getString("stop_reason"), "end_turn", "max_tokens")
                         val blocks = root.getJSONArray("content")
                         (0 until blocks.length()).map { blocks.getJSONObject(it) }.filter { it.optString("type") == "text" }.joinToString("") { it.getString("text") }
                     }
                     ProviderKind.GEMINI -> {
                         val candidate = root.getJSONArray("candidates").getJSONObject(0)
-                        require(candidate.getString("finishReason") == "STOP")
+                        finish(candidate.getString("finishReason"), "STOP", "MAX_TOKENS")
                         val parts = candidate.getJSONObject("content").getJSONArray("parts")
                         (0 until parts.length()).map { parts.getJSONObject(it) }.filter { !it.optBoolean("thought") }.joinToString("") { it.optString("text") }
                     }
@@ -193,9 +199,31 @@ class TranslationClient(private val connect: (URL) -> HttpURLConnection = { it.o
                 val fence = "\u0060".repeat(3)
                 if (text.startsWith(fence + "json\n") && text.endsWith(fence)) text = text.removePrefix(fence + "json\n").removeSuffix(fence).trim()
                 else if (text.startsWith(fence + "\n") && text.endsWith(fence)) text = text.removePrefix(fence + "\n").removeSuffix(fence).trim()
+                if (allowPartial && truncated) {
+                    text = text.removePrefix(fence + "json\n").removePrefix(fence + "\n")
+                    return completeFields(text).put("responseTruncated", true)
+                }
                 val tokener = JSONTokener(text); val value = tokener.nextValue()
                 require(value is JSONObject && tokener.nextClean() == '\u0000')
                 return value
+        }
+        internal fun completeFields(text: String): JSONObject {
+            require(text.trimStart().startsWith("{"))
+            val input = text.trimStart()
+            var depth = 0; var quoted = false; var escaped = false; var end = -1
+            for (i in input.indices) {
+                val c = input[i]
+                if (quoted) {
+                    if (escaped) escaped = false else if (c == '\\') escaped = true else if (c == '"') quoted = false
+                } else when (c) {
+                    '"' -> quoted = true
+                    '{', '[' -> depth++
+                    '}', ']' -> { depth--; if (depth == 0) return JSONObject(input.substring(0, i + 1)) }
+                    ',' -> if (depth == 1) end = i
+                }
+            }
+            require(end > 0) { "No complete fields in response" }
+            return JSONObject(input.substring(0, end) + "}")
         }
         private fun translated(value: Any): String {
             require(value is String)
