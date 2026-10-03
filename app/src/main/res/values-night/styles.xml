@@ -1,0 +1,10 @@
+<resources>
+    <style name="Theme.Bridge" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:colorAccent">#C4C0FF</item>
+        <item name="android:windowBackground">#14151B</item>
+    </style>
+</resources>
